@@ -19,6 +19,11 @@ const PERM_MASK = 0777
 // generic OK
 const OK = 211
 
+// ANSI color codes for coloring input and output
+const CODE_RESET = "\x1B[39m"
+const CODE_INPUT = "\x1B[32m"
+const CODE_OUTPUT = "\x1B[34m"
+
 var verbose bool
 
 type Conn struct {
@@ -199,7 +204,9 @@ func printVerbosely(format string, args ...interface{}) {
 }
 
 func (conn Conn) Cmd(format string, args ...interface{}) (id uint, err error) {
-	printVerbosely("> "+format+"\n", args...)
+	printVerbosely(CODE_OUTPUT)
+	printVerbosely(format+"\n", args...)
+	printVerbosely(CODE_RESET)
 	id, err = conn.intern.Cmd(format, args...)
 	return
 }
@@ -210,14 +217,18 @@ func (conn Conn) Close() error {
 
 func (conn Conn) ReadCodeLine(expected int) (code int, message string, err error) {
 	code, message, err = conn.intern.ReadCodeLine(expected)
-	printVerbosely("< (code %d) %s\n", code, message)
+	printVerbosely(CODE_INPUT)
+	printVerbosely("(code %d) %s\n", code, message)
+	printVerbosely(CODE_RESET)
 	return
 }
 
 func (conn Conn) ReadDotLines() (lines []string, err error) {
 	lines, err = conn.intern.ReadDotLines()
+	printVerbosely(CODE_INPUT)
 	for _, line := range lines {
-		printVerbosely("< %s\n", line)
+		printVerbosely(line)
 	}
+	printVerbosely(CODE_RESET + "\n")
 	return
 }
