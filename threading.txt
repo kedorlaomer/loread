@@ -1,0 +1,380 @@
+                                                      message threading.
+                                           © 1997-2002 Jamie Zawinski <jwz@jwz.org>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+In this document, I describe what is, in my humble but correct opinion, the best known algorithm for threading messages (that
+is, grouping messages together in parent/child relationships based on which messages are replies to which others.) This is the
+threading algorithm that was used in Netscape Mail and News 2.0 and 3.0, and in Grendel.
+
+Sadly, my C implementation of this algorithm is not available, because it was purged during the 4.0 rewrite, and Netscape
+refused to allow me to free the 3.0 source code.
+
+However, my Java implementation is available in the Grendel source. You can find a descendant of that code on ftp.mozilla.org.
+Here's the original source release: grendel-1998-09-05.tar.gz; and a later version, ported to more modern Java APIs:
+grendel-1999-05-14.tar.gz. The threading code is in view/Threader.java. See also IThreadable and TestThreader. (The mailsum
+code in storage/MailSummaryFile.java and the MIME parser in the mime/ directory may also be of interest.)
+
+This is not the algorithm that Netscape 4.x uses, because this is another area where the 4.0 team screwed the pooch, and
+instead of just continuing to use the existing working code, replaced it with something that was bloated, slow, buggy, and
+incorrect. But hey, at least it was in C++ and used databases!
+
+This algorithm is also described in the imapext-thread Internet Draft: Mark Crispin and Kenneth Murchison formalized my
+description of this algorithm, and propose it as the THREAD extension to the IMAP protocol (the idea being that the IMAP
+server could give you back a list of messages in a pre-threaded state, so that it wouldn't need to be done on the client
+side.) If you find my description of this algorithm confusing, perhaps their restating of it will be more to your taste.
+
+I'm told this algorithm is also used in the Evolution and Balsa mail readers. Also, Simon Cozens and Richard Clamp have
+written a Perl version; Frederik Dietz has written a Ruby version; and Max Ogden has written a JavaScript version. (I've not
+tested any of these implementations, so I make no claims as to how faithfully they implement it.)
+
+                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+First some background on the headers involved.
+
+In-Reply-To:
+
+    The In-Reply-To header was originally defined by RFC 822, the 1982 standard for mail messages. In 2001, its definition was
+    tightened up by RFC 2822.
+
+    RFC 822 defined the In-Reply-To header as, basically, a free-text header. The syntax of it allowed it to contain basically
+    any text at all. The following is, literally, a legal RFC 822 In-Reply-To header:
+
+        In-Reply-To: thirty-five ham and cheese sandwiches
+
+    So you're not guaranteed to be able to parse anything useful out of In-Reply-To if it exists, and even if it contains
+    something that looks like a Message-ID, it might not be (especially since Message-IDs and email addresses have identical
+    syntax.)
+
+    However, most of the time, In-Reply-To headers do have something useful in them. Back in 1997, I grepped over a huge
+    number of messages and collected some damned lies, I mean, statistics, on what kind of In-Reply-To headers they contained.
+    The results:
+
+        In a survey of 22,950 mail messages with In-Reply-To headers:
+
+                  18,396   had at least one occurrence of <>-bracketed text.
+                   4,554   had no <>-bracketed text at all (just names and dates.)
+                     714   contained one <>-bracketed addr-spec and no message IDs.
+                       4   contained multiple message IDs.
+                       1   contained one message ID and one <>-bracketed addr-spec.
+
+        The most common forms of In-Reply-To seemed to be:
+
+                     31%   NAME's message of TIME <ID@HOST>
+                     22%   <ID@HOST>
+                      9%   <ID@HOST> from NAME at "TIME"
+                      8%   USER's message of TIME <ID@HOST>
+                      7%   USER's message of TIME
+                      6%   Your message of "TIME"
+                     17%   hundreds of other variants (average 0.4% each?)
+
+    Of course these numbers are very much dependent on the sample set, which, in this case, was probably skewed toward Unix
+    users, and/or toward people who had been on the net for quite some time (due to the age of the archives I checked.)
+
+    However, this seems to indicate that it's not unreasonable to assume that, if there is an In-Reply-To field, then the
+    first <>-bracketed text found therein is the Message-ID of the parent message. It is safe to assume this, that is, so long
+    as you still exhibit reasonable behavior when that assumption turns out to be wrong, which will happen a small-but-not-
+    insignificant portion of the time.
+
+    RFC 2822, the successor to RFC 822, updated the definition of In-Reply-To: by the more modern standard, In-Reply-To may
+    contain only message IDs. There will usually be only one, but there could be more than one: these are the IDs of the
+    messages to which this one is a direct reply (the idea being that you might be sending one message in reply to several
+    others.)
+
+References:
+
+    The References header was defined by RFC 822 in 1982. It was defined in, effectively, the same way as the In-Reply-To
+    header was defined: which is to say, its definition was pretty useless. (Like In-Reply-To, its definition was also
+    tightened up in 2001 by RFC 2822.)
+
+    However, the References header was also defined in 1987 by RFC 1036 (section 2.2.5), the standard for USENET news
+    messages. That definition was much tighter and more useful than the RFC 822 definition: it asserts that this header
+    contain a list of Message-IDs listing the parent, grandparent, great-grandparent, and so on, of this message, oldest
+    first. That is, the direct parent of this message will be the last element of the References header.
+
+    It is not guaranteed to contain the entire tree back to the root-most message in the thread: news readers are allowed to
+    truncate it at their discretion, and the manner in which they truncate it (from the front, from the back, or from the
+    middle) is not defined.
+
+    Therefore, while there is useful info in the References header, it is not uncommon for multiple messages in the same
+    thread to have seemingly-contradictory References data, so threading code must make an effort to do the right thing in the
+    face of conflicting data.
+
+    RFC 2822 updated the mail standard to have the same semantics of References as the news standard, RFC 1036.
+
+In practice, if you ever see a References header in a mail message, it will follow the RFC 1036 (and RFC 2822) definition
+rather than the RFC 822 definition. Because the References header both contains more information and is easier to parse, many
+modern mail user agents generate and use the References header in mail instead of (or in addition to) In-Reply-To, and use the
+USENET semantics when they do so.
+
+You will generally not see In-Reply-To in a news message, but it can occasionally happen, usually as a result of mail/news
+gateways.
+
+So, any sensible threading software will have the ability to take both In-Reply-To and References headers into account.
+
+Note: RFC 2822 (section 3.6.4) says that a References field should contain the contents of the parent message's References
+field, followed by the contents of the parent's Message-ID field (in other words, the References field should contain the path
+through the thread.) However, I've been informed that recent versions of Eudora violate this standard: they put the parent
+Message-ID in the In-Reply-To header, but do not duplicate it in the References header: instead, the References header
+contains the grandparent, great-grand-parent, etc.
+
+This implies that to properly reconstruct the thread of a message in the face of this nonstandard behavior, we need to append
+any In-Reply-To message IDs to References.
+
+                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                                                        The Algorithm
+
+This algorithm consists of five main steps, and each of those steps is somewhat complicated. However, once you've wrapped your
+brain around it, it's not really that complicated, considering what it does.
+
+In defense of its complexity, I can say this:
+
+  • This algorithm is incredibly robust in the face of garbage input, and even in the face of malicious input (you cannot
+    construct a set of inputs that will send this algorithm into a loop, for example.)
+
+  • This algorithm has been field-tested by something on the order of ten million users over the course of six years.
+
+  • It really does work incredibly well. I've never seen it produce results that were anything less than totally reasonable.
+
+Well, enough with the disclaimers.
+
+                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Definitions:
+
+  • A Container object is composed of:
+
+        Message message;           // (may be null)
+        Container parent;
+        Container child;           // first child
+        Container next;            // next element in sibling list, or null
+
+  • A Message object only has a few fields we are interested in:
+
+        String subject;          
+        ID message_id;            // the ID of this message
+        ID *references;           // list of IDs of parent messages
+
+    The References field is populated from the ``References'' and/or ``In-Reply-To'' headers. If both headers exist, take the
+    first thing in the In-Reply-To header that looks like a Message-ID, and append it to the References header.
+
+    If there are multiple things in In-Reply-To that look like Message-IDs, only use the first one of them: odds are that the
+    later ones are actually email addresses, not IDs.
+
+    These ID objects can be strings, or they can be any other token on which you can do meaningful equality comparisons.
+
+    Only two things need to be done with the subject strings: ask whether they begin with ``Re:'', and compare the non-Re
+    parts for equivalence. So you can get away with interning or otherwise hashing these, too. (This is a very good idea: my
+    code does this so that I can use == instead of strcmp inside the loop.)
+
+    The ID objects also don't need to be strings, for the same reason. They can be hashes or numeric indexes or anything for
+    which equality comparisons hold, so it's way faster if you can do pointer-equivalence comparisons instead of strcmp.
+
+    The reason the Container and Message objects are separate is because the Container fields are only needed during the act
+    of threading: you don't need to keep those around, so there's no point in bulking up every Message structure with them.
+
+  • The id_table is a hash table associating Message-IDs with Containers.
+
+  • An ``empty container'' is one that doesn't have a message in it, but which shows evidence of having existed. For whatever
+    reason, we don't have that message in our list (maybe it is expired or canceled, maybe it was deleted from the folder, or
+    any of several other reasons.)
+
+    At presentation-time, these will show up as unselectable ``parent'' containers, for example, if we have the thread
+
+          -- A
+             |-- B
+             \-- C
+          -- D
+
+    and we know about messages B and C, but their common parent A does not exist, there will be a placeholder for A, to group
+    them together, and prevent D from seeming to be a sibling of B and C.
+
+    These ``dummy'' messages only ever occur at depth 0.
+
+The Algorithm:
+
+ 1. For each message:
+
+     A. If id_table contains an empty Container for this ID:
+          ● Store this message in the Container's message slot.
+        Else:
+          ● Create a new Container object holding this message;
+          ● Index the Container by Message-ID in id_table.
+
+     B. For each element in the message's References field:
+
+          ● Find a Container object for the given Message-ID:
+              ● If there's one in id_table use that;
+              ● Otherwise, make (and index) one with a null Message.
+
+          ● Link the References field's Containers together in the order implied by the References header.
+              ● If they are already linked, don't change the existing links.
+              ● Do not add a link if adding that link would introduce a loop: that is, before asserting A->B, search down the
+                children of B to see if A is reachable, and also search down the children of A to see if B is reachable. If
+                either is already reachable as a child of the other, don't add the link.
+
+     C. Set the parent of this message to be the last element in References. Note that this message may have a parent already:
+        this can happen because we saw this ID in a References field, and presumed a parent based on the other entries in that
+        field. Now that we have the actual message, we can be more definitive, so throw away the old parent and use this new
+        one. Find this Container in the parent's children list, and unlink it.
+
+        Note that this could cause this message to now have no parent, if it has no references field, but some message
+        referred to it as the non-first element of its references. (Which would have been some kind of lie...)
+
+        Note that at all times, the various ``parent'' and ``child'' fields must be kept inter-consistent.
+
+ 2. Find the root set.
+
+    Walk over the elements of id_table, and gather a list of the Container objects that have no parents.
+
+ 3. Discard id_table. We don't need it any more.
+
+ 4. Prune empty containers.
+    Recursively walk all containers under the root set.
+    For each container:
+     A. If it is an empty container with no children, nuke it.
+
+        Note: Normally such containers won't occur, but they can show up when two messages have References lines that
+        disagree. For example, assuming A and B are messages, and 1, 2, and 3 are references for messages we haven't seen:
+
+            A has references: 1, 2, 3
+            B has references: 1, 3
+
+        There is ambiguity as to whether 3 is a child of 1 or of 2. So, depending on the processing order, we might end up
+        with either
+
+              -- 1
+                 |-- 2
+                     \-- 3
+                         |-- A
+                         \-- B
+
+        or
+
+              -- 1
+                 |-- 2            <--- non root childless container!
+                 \-- 3
+                     |-- A
+                     \-- B
+
+     B. If the Container has no Message, but does have children, remove this container but promote its children to this level
+        (that is, splice them in to the current child list.)
+
+        Do not promote the children if doing so would promote them to the root set -- unless there is only one child, in which
+        case, do.
+
+ 5. Group root set by subject.
+
+    If any two members of the root set have the same subject, merge them. This is so that messages which don't have References
+    headers at all still get threaded (to the extent possible, at least.)
+     A. Construct a new hash table, subject_table, which associates subject strings with Container objects.
+
+     B. For each Container in the root set:
+
+          ● Find the subject of that sub-tree:
+              ● If there is a message in the Container, the subject is the subject of that message.
+              ● If there is no message in the Container, then the Container will have at least one child Container, and that
+                Container will have a message. Use the subject of that message instead.
+              ● Strip ``Re:'', ``RE:'', ``RE[5]:'', ``Re: Re[4]: Re:'' and so on.
+              ● If the subject is now "", give up on this Container.
+              ● Add this Container to the subject_table if:
+                  ● There is no container in the table with this subject, or
+                  ● This one is an empty container and the old one is not: the empty one is more interesting as a root, so put
+                    it in the table instead.
+                  ● The container in the table has a ``Re:'' version of this subject, and this container has a non-``Re:''
+                    version of this subject. The non-re version is the more interesting of the two.
+
+     C. Now the subject_table is populated with one entry for each subject which occurs in the root set. Now iterate over the
+        root set, and gather together the difference.
+
+        For each Container in the root set:
+
+          ● Find the subject of this Container (as above.)
+          ● Look up the Container of that subject in the table.
+          ● If it is null, or if it is this container, continue.
+
+          ● Otherwise, we want to group together this Container and the one in the table. There are a few possibilities:
+
+              ● If both are dummies, append one's children to the other, and remove the now-empty container.
+
+              ● If one container is a empty and the other is not, make the non-empty one be a child of the empty, and a
+                sibling of the other ``real'' messages with the same subject (the empty's children.)
+
+              ● If that container is a non-empty, and that message's subject does not begin with ``Re:'', but this message's
+                subject does, then make this be a child of the other.
+
+              ● If that container is a non-empty, and that message's subject begins with ``Re:'', but this message's subject
+                does not, then make that be a child of this one -- they were misordered. (This happens somewhat implicitly,
+                since if there are two messages, one with Re: and one without, the one without will be in the hash table,
+                regardless of the order in which they were seen.)
+
+              ● Otherwise, make a new empty container and make both msgs be a child of it. This catches the both-are-replies
+                and neither-are-replies cases, and makes them be siblings instead of asserting a hierarchical relationship
+                which might not be true.
+
+                (People who reply to messages without using ``Re:'' and without using a References line will break this
+                slightly. Those people suck.)
+
+        (It has occurred to me that taking the date or message number into account would be one way of resolving some of the
+        ambiguous cases, but that's not altogether straightforward either.)
+
+ 6. Now you're done threading!
+    Specifically, you no longer need the ``parent'' slot of the Container object, so if you wanted to flush the data out into
+    a smaller, longer-lived structure, you could reclaim some storage as a result.
+
+ 7. Now, sort the siblings.
+    At this point, the parent-child relationships are set. However, the sibling ordering has not been adjusted, so now is the
+    time to walk the tree one last time and order the siblings by date, sender, subject, or whatever. This step could also be
+    merged in to the end of step 4, above, but it's probably clearer to make it be a final pass. If you were careful, you
+    could also sort the messages first and take care in the above algorithm to not perturb the ordering, but that doesn't
+    really save anything.
+
+                               ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+You might be wondering what Netscape Confusicator 4.0 broke. Well, basically they never got threading working right. Aside
+from crashing, corrupting their databases files, and general bugginess, the fundamental problem had been twofold:
+
+  • 4.0 eliminated the ``dummy thread parent'' step, which is an absolute necessity to get threading right in the case where
+    you don't have every message (e.g., because one has expired, or was never sent to you at all.) The best explanation I was
+    able to get from them for why they did this was, ``it looked ugly and I didn't understand why it was there.''
+
+  • 4.0 eliminated the ``group similar unthreaded subjects'' step, which is necessary to get some semblance of threading right
+    in the absence of References and In-Reply-To, or in the presence of mangled References. If there was no References header,
+    4.0 just didn't thread at all.
+
+Plus my pet peeve,
+
+  • The 4.0 UI presented threading as a kind of sorting, which is just not the case. Threading is the act of presenting parent
+    /child relationships, whereas sorting is the act of ordering siblings.
+
+    That is, 4.0 gives you these choices: ``Sort by Date; Sort by Subject; Sort by message number; or Thread.'' Where they
+    assume that ``Thread'' implies ``Sort by Date.'' So that means that there's no way to see a threaded set of messages that
+    are sorted by message number, or by sender, etc.
+
+    There should be options for how to sort the messages; and then, orthogonal to that should be the boolean option of whether
+    the messages should be threaded.
+
+I seem to recall there being some other problem that was a result of the thread hierarchy being stored in the database,
+instead of computed as needed in realtime (there were was some kind of ordering or stale-data issue that came up?) but maybe
+they finally managed to fix that.
+
+My C version of this code was able to thread 10,000 messages in less than half a second on a low-end (90 MHz) Pentium, so the
+argument that it has to be in the database for efficiency is pure bunk.
+
+Also bunk is the idea that databases are needed for ``scalability.'' This code can thread 100,000 messages without a horrible
+delay, and the fact is, if you're looking at a 100,000 message folder (or for that matter, if you're running Confusicator at
+all), you're doing so on a machine that has sufficient memory to hold these structures in core. Also consider the question of
+whether your GUI toolkit contains a list/outliner widget that can display a million elements in the first place. (The answer
+is probably ``no.'') Also consider whether you have ever in your life seen a single folder that has a million messages in it,
+and that further, you've wanted to look at all at once (rather than only looking at the most recent 100,000 messages to arrive
+in that newsgroup...)
+
+In short, all the arguments I've heard for using databases to implement threading and mbox summarization are solving problems
+that simply don't exist. Show me a real-world situation where the above technique actually falls down, and then we'll talk.
+
+Just say no to databases!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                                                            [ up ]
