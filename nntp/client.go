@@ -203,10 +203,11 @@ func printVerbosely(format string, args ...interface{}) {
 	}
 }
 
+// We wrap textproto.Conn's function with verbose printing.
 func (conn Conn) Cmd(format string, args ...interface{}) (id uint, err error) {
 	printVerbosely(CODE_OUTPUT)
+	defer printVerbosely(CODE_RESET)
 	printVerbosely(format+"\n", args...)
-	printVerbosely(CODE_RESET)
 	id, err = conn.intern.Cmd(format, args...)
 	return
 }
@@ -218,17 +219,19 @@ func (conn Conn) Close() error {
 func (conn Conn) ReadCodeLine(expected int) (code int, message string, err error) {
 	code, message, err = conn.intern.ReadCodeLine(expected)
 	printVerbosely(CODE_INPUT)
+	defer printVerbosely(CODE_RESET)
 	printVerbosely("(code %d) %s\n", code, message)
-	printVerbosely(CODE_RESET)
 	return
 }
 
 func (conn Conn) ReadDotLines() (lines []string, err error) {
 	lines, err = conn.intern.ReadDotLines()
 	printVerbosely(CODE_INPUT)
-	for _, line := range lines {
-		printVerbosely(line)
+	defer printVerbosely(CODE_RESET)
+	if len(lines) > 0 {
+		for _, line := range lines {
+			printVerbosely("%s", line)
+		}
 	}
-	printVerbosely(CODE_RESET + "\n")
 	return
 }
