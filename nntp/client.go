@@ -113,7 +113,7 @@ func FetchArticles(config map[string]string) {
 		}
 
 		// get a list of article numbers
-		_, err = conn.Cmd("LISTGROUP %s %d-", g, watermark)
+		_, err = conn.Cmd("LISTGROUP %s %d-", g, watermark+1)
 		die(err, "Couldn't list group %s", g)
 		articles, err := conn.ReadDotLines()
 		die(err, "Couldn't list group %s", g)
@@ -124,28 +124,33 @@ func FetchArticles(config map[string]string) {
 			articles = articles[len(articles)-fetchMaximum:]
 		}
 
+		// number of last read article
+		lastRead := watermark
+
 		// save articles
 		for _, no := range articles {
-			_, err = conn.Cmd("ARTICLE %s", no)
-			die(err, "Couldn't fetch article %s in group %s", no, g)
-			lines, err := conn.ReadDotLines()
-			die(err, "Couldn't fetch article %s in group %s", no, g)
-			article := strings.Join(lines, "\n")
-			die(WriteArticle(g, no, article), "Couldn' write article %s in group %s", no, g)
+			err = fetchArticle(conn, g, no)
+			lastRead = atoi(no, lastRead)
+			if err != nil {
+				break
+			}
 		}
 
-		// we already know the last article, so save the next
-		var lastRead int
 		if len(articles) == 0 {
 			lastRead = hi
 		} else {
 			lastRead = atoi(articles[len(articles)-1], hi)
 		}
 
-		SetWatermark(g, lastRead+1)
+		if watermark > lastRead {
+			lastRead = watermark
+		}
+
+		SetWatermark(g, lastRead)
 	}
 
-	conn.Cmd("QUIT") // is allowed to fail
+	// is allowed to fail
+	conn.Cmd("QUIT")
 }
 
 func die(err error, format string, args ...interface{}) {
@@ -230,8 +235,28 @@ func (conn Conn) ReadDotLines() (lines []string, err error) {
 	defer printVerbosely(CODE_RESET)
 	if len(lines) > 0 {
 		for _, line := range lines {
-			printVerbosely("%s", line)
+			printVerbosely("%s\n", line)
 		}
 	}
 	return
+}
+
+func fetchArticle(conn Conn, group string, no string) error {
+	_, err := conn.Cmd("ARTICLE %s", no)
+
+	if err != nil {
+		return err
+	}
+
+	lines, err := conn.ReadDotLines()
+	if err != nil {
+		return err
+	}
+
+	if err != nil {
+		return err
+	}
+
+	article := strings.Join(lines[1:], "\n") // first line is error code etc.
+	return WriteArticle(group, no, article)
 }
