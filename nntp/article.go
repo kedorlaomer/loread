@@ -1,6 +1,8 @@
 package nntp
 
 import (
+	"code.google.com/p/go-charset/charset"
+	_ "code.google.com/p/go-charset/data"
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
@@ -47,6 +49,8 @@ func GetArticles(group string) ([]RawArticle, error) {
 	return rv, err
 }
 
+// Separates body and headers; determines subject, references
+// etc.; deals with encoding and charset issues.
 func FormatArticle(article RawArticle) FormattedArticle {
 	rawHeaders, body := firstAndRest(string(article), "\n\n")
 	body = TrimWhite(body)
@@ -122,9 +126,39 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		panic(fmt.Sprintf("Fehler (?): %s bei Id: %s und Inhalt '%s'\n", err, msgId, body))
 	}
 
-    // TODO: charset entry in Content-Type header
-    //
-    // decoded should be converted via
+	// determine encoding („charset“) from Content-Type
+	contentType := headers["Content-Type"]
+	contentCharset := "UTF-8" // default charset
+
+	// contentType looks like „text/plain; charset=UTF-8“
+	for _, entry := range strings.Split(contentType, "; ") {
+		if len(entry) > 0 && strings.Index(entry, "charset") >= 0 {
+			i := strings.Index(entry, "=")
+			if i >= 0 {
+				contentCharset = entry[i+1:]
+				break
+			}
+		}
+	}
+
+    // apply contentCharset
+	for {
+		// „decoded“ is nil if the Content-Transfer-Encoding was not
+		// base64 or quoted-printable
+		if decoded != nil {
+			r, err := charset.NewReader(contentCharset, strings.NewReader(string(decoded)))
+
+			// copy bytes for unknown encoding
+			if err != nil {
+				body = string(decoded)
+				break
+			}
+
+			decoded, _ = ioutil.ReadAll(r)
+			body = string(decoded)
+		}
+		break
+	}
 
 	return FormattedArticle{
 		References:   refs,
