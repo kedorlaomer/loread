@@ -6,8 +6,10 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
+	"unicode"
 )
 
 // functions for working with raw and formatted articles
@@ -105,6 +107,10 @@ func FormatArticle(article RawArticle) FormattedArticle {
 	msgId := headers["Message-Id"]
 	delete(headers, "Message-Id")
 
+	/*
+	 * encoding/charset issues
+	 */
+
 	// Content-Transfer-Encoding
 	var err error
 	encoding := headers["Content-Transfer-Encoding"]
@@ -120,6 +126,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		// 7bit, 8bit, other unknown types
 	default:
 		err = nil
+		decoded = []byte(body)
 	}
 
 	if err != nil {
@@ -131,32 +138,41 @@ func FormatArticle(article RawArticle) FormattedArticle {
 	contentCharset := "UTF-8" // default charset
 
 	// contentType looks like „text/plain; charset=UTF-8“
-	for _, entry := range strings.Split(contentType, "; ") {
+	for _, entry := range strings.Split(contentType, ";") {
+		entry = TrimWhite(entry)
 		if len(entry) > 0 && strings.Index(entry, "charset") >= 0 {
 			i := strings.Index(entry, "=")
 			if i >= 0 {
 				contentCharset = entry[i+1:]
+
+				// maybe the charset is specified with quotes
+				if contentCharset[0] == '"' {
+					contentCharset = contentCharset[1 : len(contentCharset)-1]
+				}
+
 				break
 			}
 		}
 	}
 
-    // apply contentCharset
+	// apply contentCharset
 	for {
 		// „decoded“ is nil if the Content-Transfer-Encoding was not
 		// base64 or quoted-printable
-		if decoded != nil {
+		if normaliseCharset(contentCharset) != "utf8" {
 			r, err := charset.NewReader(contentCharset, strings.NewReader(string(decoded)))
 
 			// copy bytes for unknown encoding
 			if err != nil {
 				body = string(decoded)
+				log.Printf("encoding error: %s", err)
 				break
 			}
 
 			decoded, _ = ioutil.ReadAll(r)
-			body = string(decoded)
 		}
+
+		body = string(decoded)
 		break
 	}
 
@@ -185,4 +201,16 @@ func firstAndRest(str, sep string) (first, rest string) {
 
 func TrimWhite(str string) string {
 	return strings.Trim(str, "\t\r\n ")
+}
+
+func normaliseCharset(charset string) string {
+	rv := ""
+	for _, c := range charset {
+		c = unicode.ToLower(c)
+		if !(c == '-' || c == '_' || c == ' ') {
+			rv += string(c)
+		}
+	}
+
+	return rv
 }
