@@ -56,7 +56,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 
 	buf := ""
 
-	// some headers are multiline (see RFC, 3.6, „folded“)
+	// some headers are multiline (see RFC 3977, 3.6, „folded“)
 	for _, line := range strings.Split(rawHeaders, "\n") {
 		firstChar := line[0]
 		// line for itself
@@ -77,7 +77,9 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		headers[key] = value
 	}
 
-	// some important headers
+	/*
+	 * some important headers
+	 */
 
 	// References, In-Reply-To
 	rawRefs := headers["References"] + " " + headers["In-Reply-To"]
@@ -99,17 +101,30 @@ func FormatArticle(article RawArticle) FormattedArticle {
 	msgId := headers["Message-Id"]
 	delete(headers, "Message-Id")
 
+	// Content-Transfer-Encoding
+	var err error
 	encoding := headers["Content-Transfer-Encoding"]
+	var decoded []byte
 
-	// TODO: deal with quoted-printable
-	if encoding == "base64" {
-		decoded, err := base64.StdEncoding.DecodeString(body)
-		if err != nil {
-			panic(fmt.Sprintf("Fehler (?): %s bei Id: %s und Inhalt '%s'\n", err, msgId, body))
-		}
+	switch encoding {
+	case "base64":
+		decoded, err = base64.StdEncoding.DecodeString(body)
 
-		body = string(decoded)
+	case "quoted-printable":
+		decoded, err = DecodeQuotedPrintable(body)
+
+		// 7bit, 8bit, other unknown types
+	default:
+		err = nil
 	}
+
+	if err != nil {
+		panic(fmt.Sprintf("Fehler (?): %s bei Id: %s und Inhalt '%s'\n", err, msgId, body))
+	}
+
+    // TODO: charset entry in Content-Type header
+    //
+    // decoded should be converted via
 
 	return FormattedArticle{
 		References:   refs,
