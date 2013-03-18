@@ -13,22 +13,24 @@ import (
 )
 
 // functions for working with raw and formatted articles
+
 type RawArticle string
+
+type MessageId string
 
 // Parsed article. Its „Body“ still needs formatting, e. g. line
 // breaking, recognition of quotations, links, etc. References
-// contains message ids. Subject may start with „Re: “ and
-// similar. OtherHeaders doesn't contain References &c. Id is a
-// message id.
+// contains message ids. Subject may start with „Re: “ and similar.
+// OtherHeaders doesn't contain References etc. Id is a message id.
 type FormattedArticle struct {
-	References   []string          // collected from References and In-Reply-To headers
+	References   []MessageId       // collected from References and In-Reply-To headers
 	Subject      string            // Subject header
 	OtherHeaders map[string]string // remaining headers
-	Id           string            // Message ID (as given in the corresponding header)
+	Id           MessageId         // Message ID (as given in the corresponding header)
 	Body         string            // unformatted text
 }
 
-// Returns all articles from „group“.
+// Returns all saved articles from „group“.
 func GetArticles(group string) ([]RawArticle, error) {
 	info, err := ioutil.ReadDir(group)
 
@@ -111,11 +113,11 @@ func FormatArticle(article RawArticle) FormattedArticle {
 
 	delete(headers, "References")
 	delete(headers, "In-Reply-To")
-	refs := make([]string, 0)
+	refs := make([]MessageId, 0)
 
 	for _, ref := range splitByWhite(rawRefs) {
 		if ref != "" {
-			refs = append(refs, TrimWhite(ref))
+			refs = append(refs, MessageId(TrimWhite(ref)))
 		}
 	}
 
@@ -205,7 +207,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		References:   refs,
 		Subject:      subj,
 		OtherHeaders: headers,
-		Id:           msgId,
+		Id:           MessageId(msgId),
 		Body:         body,
 	}
 }
@@ -298,13 +300,13 @@ func decodeHeader(header string) string {
 
 // splits by white space characters
 func splitByWhite(s string) []string {
-    canonicizeSpaces := func(r rune) rune {
-        if unicode.IsSpace(r) {
-            return ' '
-        }
-            return r
-    }
+	canonicizeSpaces := func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		return r
+	}
 
-    s = strings.Map(canonicizeSpaces, s)
-    return strings.Split(s, " ")
+	s = strings.Map(canonicizeSpaces, s)
+	return strings.Split(s, " ")
 }

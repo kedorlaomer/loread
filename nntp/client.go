@@ -20,9 +20,11 @@ const PERM_MASK = 0777
 const OK = 211
 
 // ANSI color codes for coloring input and output
-const CODE_RESET = "\x1B[39m"
-const CODE_INPUT = "\x1B[32m"
-const CODE_OUTPUT = "\x1B[34m"
+const (
+	CODE_INPUT  = "\x1B[32m" // green font
+	CODE_OUTPUT = "\x1B[34m" // blue font
+	CODE_RESET  = "\x1B[39m" // reset
+)
 
 var verbose bool
 
@@ -30,11 +32,12 @@ type Conn struct {
 	intern *textproto.Conn
 }
 
+// Fetches articles as specified in the configuration.
 func FetchArticles(config map[string]string) {
 	network := "tcp"
 	server, port := config["server"], config["port"]
 	username, passw := config["login"], config["pass"]
-	fetchMaximum := atoi(config["fetch-maximum"], 666) // reasonable (?) default
+	fetchMaximum := atoi(config["fetch-maximum"], 100) // reasonable (?) default
 	_, verbose = config["verbose"]
 
 	if server == "" || port == "" {
@@ -171,7 +174,7 @@ func atoi(str string, n int) int {
 
 // Reads the file „groupname“/.watermark which should contain a number. This
 // should be the last message read. Returns this number (or 0,
-// if there's no such number)
+// if there's no such number).
 func GetWatermark(groupname string) int {
 	name := groupname + "/.watermark"
 
@@ -208,7 +211,8 @@ func printVerbosely(format string, args ...interface{}) {
 	}
 }
 
-// We wrap textproto.Conn's function with verbose printing.
+// We wrap textproto.Conn's functions with verbose (and
+// colorful) printing, if „verbose“ is set in the config file.
 func (conn Conn) Cmd(format string, args ...interface{}) (id uint, err error) {
 	printVerbosely(CODE_OUTPUT)
 	defer printVerbosely(CODE_RESET)
