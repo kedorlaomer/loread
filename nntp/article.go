@@ -15,11 +15,14 @@ import (
 // functions for working with raw and formatted articles
 type RawArticle string
 
-// Parsed article. Its „Text“ still needs formatting, e. g. line
-// breaking, recognition of quotations, links, etc.
+// Parsed article. Its „Body“ still needs formatting, e. g. line
+// breaking, recognition of quotations, links, etc. References
+// contains message ids. Subject may start with „Re: “ and
+// similar. OtherHeaders doesn't contain References &c. Id is a
+// message id.
 type FormattedArticle struct {
 	References   []string          // collected from References and In-Reply-To headers
-	Subject      string            // Subject header; has „Re: “ and similar removed
+	Subject      string            // Subject header
 	OtherHeaders map[string]string // remaining headers
 	Id           string            // Message ID (as given in the corresponding header)
 	Body         string            // unformatted text
@@ -89,18 +92,40 @@ func FormatArticle(article RawArticle) FormattedArticle {
 
 	// References, In-Reply-To
 	rawRefs := headers["References"] + " " + headers["In-Reply-To"]
+
+	references := headers["References"]
+	inReplyTo := headers["In-Reply-To"]
+
+	if references != "" && inReplyTo != "" {
+		first := ""
+		// take first that looks like a message id
+		for _, ref := range splitByWhite(inReplyTo) {
+			if looksLikedMessageId(ref) {
+				first = ref
+				break
+			}
+		}
+
+		rawRefs = references + " " + first
+	}
+
 	delete(headers, "References")
 	delete(headers, "In-Reply-To")
 	refs := make([]string, 0)
 
-	for _, ref := range strings.Split(rawRefs, " ") {
+	for _, ref := range splitByWhite(rawRefs) {
 		if ref != "" {
-			refs = append(refs, ref)
+			refs = append(refs, TrimWhite(ref))
 		}
 	}
 
 	// Subject
 	subj := headers["Subject"]
+	// base64 or quoted-printable encoded; see RFC 2047
+	if len(subj) > 0 && subj[0:2] == "=?" {
+		subj = decodeHeader(subj)
+	}
+	subj = stripPrefixes(subj)
 	delete(headers, "Subject")
 
 	// Id
@@ -123,7 +148,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 	case "quoted-printable":
 		decoded, err = DecodeQuotedPrintable(body)
 
-		// 7bit, 8bit, other unknown types
+		// 7bit, 8bit, other unknown types or nil
 	default:
 		err = nil
 		decoded = []byte(body)
@@ -145,7 +170,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 			if i >= 0 {
 				contentCharset = entry[i+1:]
 
-				// maybe the charset is specified with quotes
+				// maybe the charset is specified with "quotes"
 				if contentCharset[0] == '"' {
 					contentCharset = contentCharset[1 : len(contentCharset)-1]
 				}
@@ -200,9 +225,10 @@ func firstAndRest(str, sep string) (first, rest string) {
 }
 
 func TrimWhite(str string) string {
-	return strings.Trim(str, "\t\r\n ")
+	return strings.Trim(str, "\t\r\n  ")
 }
 
+// convert to lower case; remove characters '-', '_', ' '
 func normaliseCharset(charset string) string {
 	rv := ""
 	for _, c := range charset {
@@ -213,4 +239,72 @@ func normaliseCharset(charset string) string {
 	}
 
 	return rv
+}
+
+// See RFC 3977, 3.6
+func looksLikedMessageId(id string) bool {
+	return len(id) > 0 && id[0] == '<' && id[len(id)-1] == '>'
+}
+
+// removes prefixes „Re: “, „Aw: “ (we haven't found other
+// relevant prefixes)
+func stripPrefixes(subj string) string {
+	badPrefixes := []string{"re: ", "aw: "}
+	redo := true
+	for redo {
+		redo = false
+		for _, prefix := range badPrefixes {
+			if len(subj) >= len(prefix) && strings.ToLower(subj[:len(prefix)]) == prefix {
+				subj = subj[len(prefix):]
+				redo = true
+			}
+		}
+	}
+
+	return subj
+}
+
+// see RFC 2047; TODO: duplication of code in FormatArticle?
+func decodeHeader(header string) string {
+	parts := strings.Split(header, "?")
+	contentCharset, encoding, text := parts[1], parts[2], parts[3]
+	err := error(nil)
+	bytes := []byte{}
+	switch strings.ToUpper(encoding) {
+	// quoted-printable
+	case "Q":
+		bytes, err = DecodeQuotedPrintable(text)
+
+	case "B":
+		bytes, err = base64.StdEncoding.DecodeString(text)
+
+	default:
+		bytes = []byte(fmt.Sprintf("<<Couldn't decode '%s'>>", encoding))
+	}
+
+	if err != nil {
+		panic(fmt.Sprintf("Fehler (?): %s bei Header: %s\n", header))
+	}
+
+	r, err := charset.NewReader(contentCharset, strings.NewReader(string(bytes)))
+
+	if err != nil {
+		return "<<Couldn't decode header '" + header + "'>>"
+	}
+
+	rv, _ := ioutil.ReadAll(r)
+	return string(rv)
+}
+
+// splits by white space characters
+func splitByWhite(s string) []string {
+    canonicizeSpaces := func(r rune) rune {
+        if unicode.IsSpace(r) {
+            return ' '
+        }
+            return r
+    }
+
+    s = strings.Map(canonicizeSpaces, s)
+    return strings.Split(s, " ")
 }
