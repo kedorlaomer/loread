@@ -11,13 +11,14 @@ import (
 )
 
 // NNTP protocol codes (see RFC 3977; https://tools.ietf.org/html/rfc3977)
-const HELLO = 200
-const PASSWORD_REQUIRED = 381
-const AUTHEN_ACCEPTED = 281
-const PERM_MASK = 0777
+const (
+	HELLO             = 200
+	PASSWORD_REQUIRED = 381
+	AUTHEN_ACCEPTED   = 281
+	OK                = 211 // generic OK
+)
 
-// generic OK
-const OK = 211
+const PERM_MASK = 0777 // for our own files
 
 // ANSI color codes for coloring input and output
 const (

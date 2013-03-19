@@ -24,10 +24,10 @@ type MessageId string
 // OtherHeaders doesn't contain References etc. Id is a message id.
 type FormattedArticle struct {
 	References   []MessageId       // collected from References and In-Reply-To headers
-	Subject      string            // Subject header
-	OtherHeaders map[string]string // remaining headers
+	Subject      string            // Subject line
 	Id           MessageId         // Message ID (as given in the corresponding header)
-	Body         string            // unformatted text
+	OtherHeaders map[string]string // remaining headers
+	Body         string            // unformatted text, converted to UTF-8
 }
 
 // Returns all saved articles from „group“.
@@ -127,7 +127,6 @@ func FormatArticle(article RawArticle) FormattedArticle {
 	if len(subj) > 0 && subj[0:2] == "=?" {
 		subj = decodeHeader(subj)
 	}
-	subj = stripPrefixes(subj)
 	delete(headers, "Subject")
 
 	// Id
