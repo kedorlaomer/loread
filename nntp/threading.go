@@ -6,8 +6,8 @@ import "fmt"
 
 // Tree-structured wrapper around FormattedArticle.
 type Container struct {
-	Article             FormattedArticle // underlying Article
-	Parent, Child, Next *Container       // link structure (threaded tree)
+	Article             *FormattedArticle // underlying Article
+	Parent, Child, Next *Container        // link structure (threaded tree)
 }
 
 type idTable map[MessageId]*Container
@@ -20,11 +20,11 @@ var id_table idTable
 func Thread(articles []FormattedArticle) []*Container {
 	id_table = make(idTable)
 
-    // 1. rough threading
-	for _, message := range articles {
+	// 1. rough threading
+	for i, message := range articles {
 		// A. insert to id_table
 		container := &Container{
-			Article: message,
+			Article: &articles[i],
 		}
 
 		id_table[message.Id] = container
@@ -95,20 +95,21 @@ func Thread(articles []FormattedArticle) []*Container {
 
 	for _, container := range id_table {
 		if container.Parent == nil {
-			println(container.Article.Subject)
 			rv = append(rv, container)
 		}
+	}
+
+	// 3.
+	id_table = nil
+
+	// 4. This has to use recursion.
+	for _, container := range rv {
+		pruneEmptyContainer(container)
 	}
 
 	for _, c := range rv {
 		printContainers(c)
 	}
-
-    // 3.
-    id_table := nil
-
-    // 4. prune empty containers
-    for _, container 
 
 	return rv
 }
@@ -169,4 +170,48 @@ func printContainersRek(c *Container, depth int) {
 	for c2 := c.Child; c2 != nil; c2 = c2.Next {
 		printContainersRek(c2, depth+1)
 	}
+}
+
+// recursively perform step 4, following „Next“ and „Child“
+// links
+func pruneEmptyContainer(c *Container) {
+	if c == nil {
+		return
+	}
+
+	// 4A. empty article, no children
+	if shouldNuke(c.Child) {
+		c.Child = nil
+	}
+
+	if shouldNuke(c.Next) {
+		c.Next = nil
+	}
+
+	// last sibling of c
+	last := c
+	for last.Next != nil {
+		last = last.Next
+	}
+
+	// 4B. empty article, has children → promote
+	if c.Child != nil && c.Child.Article == nil {
+		last.Next = c.Child
+		last = last.Next
+	}
+
+	if c.Next != nil && c.Next.Article == nil {
+		last.Next = c.Child
+	}
+
+	// TODO: algorithm says: distinguish in 4B between root and
+	// non-root containers which we don't
+
+	// recurse
+	pruneEmptyContainer(c.Child)
+	pruneEmptyContainer(c.Next)
+}
+
+func shouldNuke(c *Container) bool {
+	return c != nil && c.Child == nil && c.Next == nil && c.Article == nil
 }
