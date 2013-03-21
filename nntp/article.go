@@ -247,24 +247,6 @@ func looksLikedMessageId(id string) bool {
 	return len(id) > 0 && id[0] == '<' && id[len(id)-1] == '>'
 }
 
-// removes prefixes „Re: “, „Aw: “ (we haven't found other
-// relevant prefixes)
-func stripPrefixes(subj string) string {
-	badPrefixes := []string{"re: ", "aw: "}
-	redo := true
-	for redo {
-		redo = false
-		for _, prefix := range badPrefixes {
-			if len(subj) >= len(prefix) && strings.ToLower(subj[:len(prefix)]) == prefix {
-				subj = subj[len(prefix):]
-				redo = true
-			}
-		}
-	}
-
-	return subj
-}
-
 // see RFC 2047; TODO: duplication of code in FormatArticle?
 func decodeHeader(header string) string {
 	parts := strings.Split(header, "?")

@@ -1,6 +1,9 @@
 package nntp
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // implements the algorithm from http://www.jwz.org/doc/threading.html
 
@@ -11,8 +14,13 @@ type Container struct {
 }
 
 type idTable map[MessageId]*Container
+type subjectTable map[string]*Container
 
 var id_table idTable
+
+// Prefixes that typically mean a follow up. For technical
+// reasons, this can't be a constant.
+var _BAD_PREFIXES = []string{"re: ", "aw: "}
 
 // Threads articles according to the algorithm from
 // http://www.jwz.org/doc/threading.html; see also
@@ -20,9 +28,9 @@ var id_table idTable
 func Thread(articles []FormattedArticle) []*Container {
 	id_table = make(idTable)
 
-	// 1. rough threading
+	// 1. Rough threading
 	for i, message := range articles {
-		// A. insert to id_table
+		// A. Insert to id_table
 		container := &Container{
 			Article: &articles[i],
 		}
@@ -34,7 +42,7 @@ func Thread(articles []FormattedArticle) []*Container {
 	// should be performed in the same loop (for each message),
 	// but using different loops seems to be easier.
 	for _, message := range articles {
-		// B. link together what belongs together according to
+		// B. Link together what belongs together according to
 		// message.References
 		if len(message.References) > 1 {
 			for i := len(message.References) - 2; i >= 0; i-- {
@@ -52,7 +60,7 @@ func Thread(articles []FormattedArticle) []*Container {
 	}
 
 	for _, container := range id_table {
-		// C. set message's parent.
+		// C. Set message's parent.
 		refs := container.Article.References
 		if len(refs) > 0 {
 			// parent, according to References
@@ -90,12 +98,13 @@ func Thread(articles []FormattedArticle) []*Container {
 		}
 	}
 
-	// 2. root set
-	rv := []*Container{}
+	// 2.
+	rootSet := []*Container{}
 
+	// containers with parents are the root set
 	for _, container := range id_table {
 		if container.Parent == nil {
-			rv = append(rv, container)
+			rootSet = append(rootSet, container)
 		}
 	}
 
@@ -103,15 +112,89 @@ func Thread(articles []FormattedArticle) []*Container {
 	id_table = nil
 
 	// 4. This has to use recursion.
-	for _, container := range rv {
-		pruneEmptyContainer(container)
+	for _, container := range rootSet {
+		pruneEmptyContainer(container, true)
 	}
 
-	for _, c := range rv {
+	for _, c := range rootSet {
 		printContainers(c)
 	}
 
-	return rv
+	// 5. Group root set by subject
+
+	// 5A.
+	subject_table := make(subjectTable)
+
+	// 5B. Find root set's subjects
+	for _, c := range rootSet {
+		subject := stripPrefixes(findSubject(c))
+
+		if subject == "" {
+			continue
+		}
+
+		old, ok := subject_table[subject]
+		// no old container → insert
+		if !ok {
+			subject_table[subject] = c
+		} else {
+			// new container is empty → more interesting
+			if c.Article == nil {
+				subject_table[subject] = c
+			} else {
+				if isFollowup(old.Article.Subject) && !isFollowup(c.Article.Subject) {
+					subject_table[subject] = c
+				}
+			}
+		}
+	}
+
+	// 5C. Merge containers with (almost) equal Subject
+	for _, c := range rootSet {
+		subject := stripPrefixes(findSubject(c))
+
+		if subject == "" {
+			continue
+		}
+
+		other := subject_table[subject]
+
+		if other == nil || other == c {
+			continue
+		}
+
+		// We want to merge the separate threads c and other.
+
+		// both dummies: append other's children to c's children
+		if c.Article == nil && other.Article == nil {
+			last := c
+			for last.Next != nil {
+				last = last.Next
+			}
+
+			last.Next = other.Child
+			other.Child = nil
+			other.Next = nil
+			delete(subject_table, subject)
+			subject_table[subject] = c
+		}
+
+		// one is empty, the other isn't
+		if (c.Article == nil) != (other.Article == nil) {
+            var empty, nonEmpty *Container
+            if c.Article == nil {
+                empty = c
+                nonEmpty = other
+            } else {
+                empty = other
+                nonEmpty = c
+            }
+
+            // TODO: finish
+		}
+	}
+
+	return rootSet
 }
 
 // id_table[id] may be nil, but we want an empty container
@@ -172,9 +255,11 @@ func printContainersRek(c *Container, depth int) {
 	}
 }
 
-// recursively perform step 4, following „Next“ and „Child“
-// links
-func pruneEmptyContainer(c *Container) {
+// Recursively perform step 4, following „Next“ and „Child“
+// links. The flag isRoot is true, if c is in the rootset (in
+// this case, only single children should be promoted to the
+// root).
+func pruneEmptyContainer(c *Container, isRoot bool) {
 	if c == nil {
 		return
 	}
@@ -196,22 +281,58 @@ func pruneEmptyContainer(c *Container) {
 
 	// 4B. empty article, has children → promote
 	if c.Child != nil && c.Child.Article == nil {
-		last.Next = c.Child
-		last = last.Next
+		if !isRoot || c.Child.Next == nil {
+			last.Next = c.Child
+		}
 	}
-
-	if c.Next != nil && c.Next.Article == nil {
-		last.Next = c.Child
-	}
-
-	// TODO: algorithm says: distinguish in 4B between root and
-	// non-root containers which we don't
 
 	// recurse
-	pruneEmptyContainer(c.Child)
-	pruneEmptyContainer(c.Next)
+	pruneEmptyContainer(c.Child, false)
+	pruneEmptyContainer(c.Next, false)
 }
 
 func shouldNuke(c *Container) bool {
 	return c != nil && c.Child == nil && c.Next == nil && c.Article == nil
+}
+
+// removes leading _BAD_PREFIXES from subj
+func stripPrefixes(subj string) string {
+	redo := true
+	for redo {
+		redo = false
+		for _, prefix := range _BAD_PREFIXES {
+			if strings.HasPrefix(strings.ToLower(subj), prefix) {
+				subj = subj[len(prefix):]
+				redo = true
+			}
+		}
+	}
+
+	return subj
+}
+
+// does subj start with one of the typical follow-up prefixes?
+func isFollowup(subj string) bool {
+	for _, prefix := range _BAD_PREFIXES {
+		if strings.HasPrefix(strings.ToLower(subj), prefix) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// uses the procedure described in 5B for finding the subject of
+// c's article
+func findSubject(c *Container) string {
+	if article1 := c.Article; article1 == nil {
+		if c.Child == nil || c.Child.Article == nil || c.Child.Article.Subject == "" {
+			return ""
+		}
+		return c.Child.Article.Subject
+	} else {
+		return article1.Subject
+	}
+
+	return ""
 }
