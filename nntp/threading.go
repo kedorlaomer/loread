@@ -116,10 +116,6 @@ func Thread(articles []FormattedArticle) []*Container {
 		pruneEmptyContainer(container, true)
 	}
 
-	for _, c := range rootSet {
-		printContainers(c)
-	}
-
 	// 5. Group root set by subject
 
 	// 5A.
@@ -149,49 +145,108 @@ func Thread(articles []FormattedArticle) []*Container {
 		}
 	}
 
-	// 5C. Merge containers with (almost) equal Subject
-	for _, c := range rootSet {
-		subject := stripPrefixes(findSubject(c))
+	// 5C. Merge containers with (almost) equal Subject.
+	for i, this := range rootSet {
+		subject := stripPrefixes(findSubject(this))
 
 		if subject == "" {
 			continue
 		}
 
-		other := subject_table[subject]
+		that := subject_table[subject]
 
-		if other == nil || other == c {
+		if that == nil || that == this {
 			continue
 		}
 
-		// We want to merge the separate threads c and other.
+		// We want to merge the separate threads this and that.
 
-		// both dummies: append other's children to c's children
-		if c.Article == nil && other.Article == nil {
-			last := c
+		// (i) both dummies: append that's children to this'
+		// children
+		if this.Article == nil && that.Article == nil {
+			last := this
 			for last.Next != nil {
 				last = last.Next
 			}
 
-			last.Next = other.Child
-			other.Child = nil
-			other.Next = nil
+			last.Next = that.Child
+			that.Child = nil
+			that.Next = nil
 			delete(subject_table, subject)
-			subject_table[subject] = c
+			subject_table[subject] = this
+
+			continue
 		}
 
-		// one is empty, the other isn't
-		if (c.Article == nil) != (other.Article == nil) {
-            var empty, nonEmpty *Container
-            if c.Article == nil {
-                empty = c
-                nonEmpty = other
-            } else {
-                empty = other
-                nonEmpty = c
-            }
+		// (ii) one is empty, the that isn't → append non-empty
+		if (this.Article == nil) != (that.Article == nil) {
+			var empty, nonEmpty *Container
+			if this.Article == nil {
+				empty = this
+				nonEmpty = that
+			} else {
+				empty = that
+				nonEmpty = this
+			}
 
-            // TODO: finish
+			last := empty
+			for last.Next != nil {
+				last = last.Next
+			}
+
+			last.Next = nonEmpty
+
+			continue
 		}
+
+		// (iii) that is non-empty, that is not a follow up, but
+		// this is → make this child of that
+		if that.Article != nil && !isFollowup(that.Article.Subject) &&
+			isFollowup(this.Article.Subject) {
+			last := that
+			for last.Next != nil {
+				last = last.Next
+			}
+
+			last.Next = this
+
+			continue
+		}
+
+		// (iv) that is non-empty, that is follow up, but this
+		// is isn't → make that child of this
+		if that.Article != nil && isFollowup(that.Article.Subject) &&
+			!isFollowup(this.Article.Subject) {
+			last := this
+			for last.Next != nil {
+				last = last.Next
+			}
+
+			last.Next = that
+
+			continue
+		}
+
+		// (v) make this and that siblings of a new container
+		last := this
+		for last.Next != nil {
+			last = last.Next
+		}
+
+		last.Next = that
+
+		rootSet[i] = &Container{
+			Child: this,
+		}
+	}
+
+	// 6. Done
+
+    // 7. Not really: need to sort siblings by date (or
+    // whatever)
+
+	for _, c := range rootSet {
+		printContainers(c)
 	}
 
 	return rootSet
@@ -248,7 +303,11 @@ func printContainersRek(c *Container, depth int) {
 		}
 	}
 
-	fmt.Println(c.Article.Subject)
+	if c.Article != nil {
+		fmt.Println(c.Article.Subject)
+	} else {
+		fmt.Println("<<empty container>>")
+	}
 
 	for c2 := c.Child; c2 != nil; c2 = c2.Next {
 		printContainersRek(c2, depth+1)
