@@ -2,6 +2,7 @@ package nntp
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -101,7 +102,7 @@ func Thread(articles []FormattedArticle) []*Container {
 	// 2.
 	rootSet := []*Container{}
 
-	// containers with parents are the root set
+	// containers without parents are the root set
 	for _, container := range id_table {
 		if container.Parent == nil {
 			rootSet = append(rootSet, container)
@@ -240,10 +241,13 @@ func Thread(articles []FormattedArticle) []*Container {
 		}
 	}
 
-	// 6. Done
+	// 6. Done.
 
-    // 7. Not really: need to sort siblings by date (or
-    // whatever)
+	// 7. Not really: Need to sort siblings. This is is easier
+	// to do recursively.
+	for _, c := range rootSet {
+		sortSiblings(c)
+	}
 
 	for _, c := range rootSet {
 		printContainers(c)
@@ -394,4 +398,46 @@ func findSubject(c *Container) string {
 	}
 
 	return ""
+}
+
+// infrastructure for sorting []*Container by date
+type containers []*Container
+
+func (c containers) Less(i, j int) bool {
+	return c[i].Article.Date.Before(c[j].Article.Date)
+}
+
+func (c containers) Swap(i, j int) {
+	c[i], c[j] = c[j], c[i]
+}
+
+func (c containers) Len() int {
+	return len(c)
+}
+
+// sorts c.Child, c.Child.Next, … by their date header
+func sortSiblings(c *Container) {
+	siblings := []*Container{}
+
+	if c.Child != nil {
+		for s := c.Child; s != nil; s = s.Next {
+			siblings = append(siblings, s)
+		}
+
+		if len(siblings) > 1 {
+			sort.Sort(containers(siblings))
+
+			// insert to linked list
+			c.Child = siblings[0]
+			iter := c.Child
+
+			for _, s := range siblings[1:] {
+				iter.Next = s
+				iter = s
+			}
+
+			// terminate list
+			iter.Next = nil
+		}
+	}
 }
