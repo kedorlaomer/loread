@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -28,6 +29,7 @@ type FormattedArticle struct {
 	Id           MessageId         // Message ID (as given in the corresponding header)
 	OtherHeaders map[string]string // remaining headers
 	Body         string            // unformatted text, converted to UTF-8
+	Date         time.Time         // Date header (already parsed)
 }
 
 // Returns all saved articles from „group“.
@@ -202,12 +204,36 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		break
 	}
 
+	var aTime time.Time
+	if date, ok := headers["Date"]; ok {
+		// we found all these date formats in our corpus,
+		// containing 20000+ messages from comp.lang.forth and
+		// comp.lang.lisp
+		layouts := []string{
+			"Mon, 2 Jan 2006 15:04:05 -0700 (MST)",
+			"Mon, 2 Jan 2006 15:04:05 -0700",
+			"Mon, 2 Jan 2006 15:04:05 MST",
+			"Mon, 2 Jan 2006 15:04:05 -0700 (MST-07:00)",
+			"2 Jan 2006 15:04:05 -0700",
+			"2 Jan 2006 15:04:05 MST",
+			"Mon, 2 Jan 2006 15:04 -0700",
+		}
+
+		for _, layout := range layouts {
+			aTime, err = time.Parse(layout, date)
+			if err == nil {
+				break
+			}
+		}
+	}
+
 	return FormattedArticle{
 		References:   refs,
 		Subject:      subj,
 		OtherHeaders: headers,
 		Id:           MessageId(msgId),
 		Body:         body,
+		Date:         aTime,
 	}
 }
 
