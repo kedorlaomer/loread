@@ -10,8 +10,8 @@ import (
 
 // Tree-structured wrapper around FormattedArticle.
 type Container struct {
-	Article             *FormattedArticle // underlying Article
-	Parent, Child, Next *Container        // link structure (threaded tree)
+	Article             *ParsedArticle // underlying Article
+	Parent, Child, Next *Container     // link structure (threaded tree)
 }
 
 type idTable map[MessageId]*Container
@@ -26,7 +26,7 @@ var _BAD_PREFIXES = []string{"re: ", "aw: "}
 // Threads articles according to the algorithm from
 // http://www.jwz.org/doc/threading.html; see also
 // https://raw.github.com/kedorlaomer/loread/master/threading.txt
-func Thread(articles []FormattedArticle) []*Container {
+func Thread(articles []ParsedArticle) []*Container {
 	id_table = make(idTable)
 
 	// 1. Rough threading

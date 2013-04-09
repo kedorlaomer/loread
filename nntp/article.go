@@ -2,7 +2,7 @@ package nntp
 
 import (
 	"code.google.com/p/go-charset/charset"
-	_ "code.google.com/p/go-charset/data"
+	_ "code.google.com/p/go-charset/data" // embed tables into executable
 	"encoding/base64"
 	"fmt"
 	"io/ioutil"
@@ -23,7 +23,7 @@ type MessageId string
 // breaking, recognition of quotations, links, etc. References
 // contains message ids. Subject may start with „Re: “ and similar.
 // OtherHeaders doesn't contain References etc. Id is a message id.
-type FormattedArticle struct {
+type ParsedArticle struct {
 	References   []MessageId       // collected from References and In-Reply-To headers
 	Subject      string            // Subject line
 	Id           MessageId         // Message ID (as given in the corresponding header)
@@ -60,7 +60,7 @@ func GetArticles(group string) ([]RawArticle, error) {
 
 // Separates body and headers; determines subject, references
 // etc.; deals with encoding and charset issues.
-func FormatArticle(article RawArticle) FormattedArticle {
+func FormatArticle(article RawArticle) ParsedArticle {
 	rawHeaders, body := firstAndRest(string(article), "\n\n")
 	body = TrimWhite(body)
 
@@ -227,7 +227,7 @@ func FormatArticle(article RawArticle) FormattedArticle {
 		}
 	}
 
-	return FormattedArticle{
+	return ParsedArticle{
 		References:   refs,
 		Subject:      subj,
 		OtherHeaders: headers,
