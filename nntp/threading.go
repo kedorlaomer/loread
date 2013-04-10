@@ -8,7 +8,7 @@ import (
 
 // implements the algorithm from http://www.jwz.org/doc/threading.html
 
-// Tree-structured wrapper around FormattedArticle.
+// Tree-structured wrapper around ParsedArticle.
 type Container struct {
 	Article             *ParsedArticle // underlying Article
 	Parent, Child, Next *Container     // link structure (threaded tree)
@@ -247,10 +247,6 @@ func Thread(articles []ParsedArticle) []*Container {
 	// to do recursively.
 	for _, c := range rootSet {
 		sortSiblings(c)
-	}
-
-	for _, c := range rootSet {
-		printContainers(c)
 	}
 
 	return rootSet
