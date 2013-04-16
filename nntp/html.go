@@ -131,11 +131,12 @@ func representArticle(article ParsedArticle) template.HTML {
 }
 
 // shows cont.Article (where we assume cont.Article != nil)
-func ShowArticle(cont *Container, out io.Writer) {
+func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 	type tmp struct {
 		*Container
 		SanitizedText template.HTML
-        // TODO: links up, next, parent, back to group…
+		Next, Back    template.HTML // some links
+		HasNext       bool          // is Next set?
 	}
 	template1 :=
 		`<html>
@@ -143,19 +144,58 @@ func ShowArticle(cont *Container, out io.Writer) {
         <title>{{.Article.OtherHeaders.From}} — {{.Article.Subject}}</title>
     </head>
     <body>
-        <h1>{{.Article.Subject}}</h1>
+        <h1>{{.Article.Subject}} <i>{{.Article.OtherHeaders.From}}</i></h1>
         {{.SanitizedText}}
     </body>
     <table>
         <tr>
-        <td>{{}}</td>
+        <td><a href="{{.Back}}">Back</a></td>
+        {{if .HasNext}}<td><a href="{{.Next}}">Next</a></td>{{end}}
         </tr>
     </table>
 </html>`
 
 	tmpl := template.Must(template.New("article").Parse(template1))
-	data := tmp{cont, representArticle(*cont.Article)}
 
+	valuesBack := url.Values{}
+	valuesBack.Set("delete", string(cont.Article.Id))
+
+	valuesNext := url.Values{}
+
+    // FIXME: doesn't work
+    // find next article
+	var next *Container
+	for c := cont; c != nil; c = c.Parent {
+		if c.Next != nil && c.Next.Article != nil {
+			next = c.Next
+            fmt.Printf("Found next = %q\n", c.Next)
+			break
+		}
+	}
+
+	if next != nil || nextId != "" {
+		valuesNext.Set("delete", string(cont.Article.Id))
+		valuesNext.Set("view", "article")
+		id := ""
+		if next == nil {
+			id = string(nextId)
+		} else {
+			id = string(next.Article.Id)
+		}
+		valuesNext.Set("arg", id)
+	}
+
+	urlBack := url.URL{
+		RawQuery: valuesBack.Encode(),
+	}
+
+	urlNext := url.URL{
+		RawQuery: valuesNext.Encode(),
+	}
+
+	data := tmp{cont, representArticle(*cont.Article),
+		template.HTML(urlNext.String()), template.HTML(urlBack.String()),
+		next != nil}
 	err := tmpl.Execute(out, data)
 
 	if err != nil {
