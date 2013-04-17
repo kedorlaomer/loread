@@ -120,17 +120,10 @@ func representContainer(cont *Container, depth int) template.HTML {
 	return template.HTML(rv)
 }
 
-// similar to representContainer
-func representArticle(article ParsedArticle) template.HTML {
-	text := template.HTMLEscapeString(article.Body)
-	// TODO:
-	// * deal with quotations
-	// * recognize links
-	// * break long lines (very necessary for quoted-printable!)
-	return template.HTML(text)
-}
-
 // shows cont.Article (where we assume cont.Article != nil)
+// nextId is the id of the next article in one of the following
+// containers. It needs to be supplied since we can't infer it
+// from cont, if there's no article after cont.Article.
 func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 	type tmp struct {
 		*Container
@@ -143,14 +136,33 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
     <head>
         <title>{{.Article.OtherHeaders.From}} — {{.Article.Subject}}</title>
     </head>
+    <style>
+        .quotation {
+            border-left: red thin solid;
+            padding-left: .5em
+        }
+        .quotation .quotation {
+            border-left: green thin solid;
+            padding-left: .5em
+        }
+        .quotation .quotation .quotation {
+            border-left: blue thin solid;
+            padding-left: .5em
+        }
+
+        .quotation .quotation .quotation .quotation {
+            border-left: black thin solid;
+            padding-left: .5em
+        }
+    </style>
     <body>
         <h1>{{.Article.Subject}} <i>{{.Article.OtherHeaders.From}}</i></h1>
-        {{.SanitizedText}}
+<pre>{{.SanitizedText}}</pre>
     </body>
-    <table>
+    <table width="100%">
         <tr>
-        <td><a href="{{.Back}}">Back</a></td>
-        {{if .HasNext}}<td><a href="{{.Next}}">Next</a></td>{{end}}
+        <td width="20%"><a href="{{.Back}}">Back</a></td>
+        {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
         </tr>
     </table>
 </html>`
@@ -162,18 +174,18 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 
 	valuesNext := url.Values{}
 
-    // FIXME: doesn't work
-    // find next article
+	// find next article
 	var next *Container
 	for c := cont; c != nil; c = c.Parent {
 		if c.Next != nil && c.Next.Article != nil {
 			next = c.Next
-            fmt.Printf("Found next = %q\n", c.Next)
 			break
 		}
 	}
 
-	if next != nil || nextId != "" {
+	var hasNext bool
+
+	if hasNext := next != nil || nextId != ""; hasNext {
 		valuesNext.Set("delete", string(cont.Article.Id))
 		valuesNext.Set("view", "article")
 		id := ""
@@ -193,9 +205,9 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 		RawQuery: valuesNext.Encode(),
 	}
 
-	data := tmp{cont, representArticle(*cont.Article),
+	data := tmp{cont, RepresentArticle(*cont.Article),
 		template.HTML(urlNext.String()), template.HTML(urlBack.String()),
-		next != nil}
+		!hasNext}
 	err := tmpl.Execute(out, data)
 
 	if err != nil {
