@@ -103,7 +103,7 @@ func FormatArticle(article RawArticle) ParsedArticle {
 	if references != "" && inReplyTo != "" {
 		first := ""
 		// take first that looks like a message id
-		for _, ref := range splitByWhite(inReplyTo) {
+		for _, ref := range SplitByWhite(inReplyTo) {
 			if looksLikedMessageId(ref) {
 				first = ref
 				break
@@ -117,7 +117,7 @@ func FormatArticle(article RawArticle) ParsedArticle {
 	delete(headers, "In-Reply-To")
 	refs := make([]MessageId, 0)
 
-	for _, ref := range splitByWhite(rawRefs) {
+	for _, ref := range SplitByWhite(rawRefs) {
 		if ref != "" {
 			refs = append(refs, MessageId(TrimWhite(ref)))
 		}
@@ -252,7 +252,7 @@ func firstAndRest(str, sep string) (first, rest string) {
 }
 
 func TrimWhite(str string) string {
-	return strings.Trim(str, "\t\r\n  ")
+	return strings.TrimFunc(str, unicode.IsSpace)
 }
 
 // convert to lower case; remove characters '-', '_', ' '
@@ -306,7 +306,7 @@ func decodeHeader(header string) string {
 }
 
 // splits by white space characters
-func splitByWhite(s string) []string {
+func SplitByWhite(s string) []string {
 	canonicizeSpaces := func(r rune) rune {
 		if unicode.IsSpace(r) {
 			return ' '

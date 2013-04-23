@@ -138,19 +138,6 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
     </head>
     <style>
         .quotation {
-            border-left: red thin solid;
-            padding-left: .5em
-        }
-        .quotation .quotation {
-            border-left: green thin solid;
-            padding-left: .5em
-        }
-        .quotation .quotation .quotation {
-            border-left: blue thin solid;
-            padding-left: .5em
-        }
-
-        .quotation .quotation .quotation .quotation {
             border-left: black thin solid;
             padding-left: .5em
         }
@@ -205,7 +192,8 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 		RawQuery: valuesNext.Encode(),
 	}
 
-	data := tmp{cont, RepresentArticle(*cont.Article),
+	text := RepresentArticle(*cont.Article)
+	data := tmp{cont, text,
 		template.HTML(urlNext.String()), template.HTML(urlBack.String()),
 		!hasNext}
 	err := tmpl.Execute(out, data)
