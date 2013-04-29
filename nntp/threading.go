@@ -249,6 +249,15 @@ func Thread(articles []ParsedArticle) []*Container {
 		sortSiblings(c)
 	}
 
+	// link rootSet
+	for i := 0; i < len(rootSet)-1; i++ {
+		if mayLink(rootSet[i], rootSet[i+1]) {
+			rootSet[i].Next = rootSet[i+1]
+		} else {
+			fmt.Printf("Couldn't link #%d\n", i)
+		}
+	}
+
 	return rootSet
 }
 

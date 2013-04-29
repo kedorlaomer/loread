@@ -85,10 +85,12 @@ func containersToString(ch chan<- template.HTML, cont []*Container) {
 
 // recursive kernel for containersToString
 func walk(ch chan<- template.HTML, cont *Container, depth int) {
-	ch <- representContainer(cont, depth)
+	if cont.Article != nil {
+		ch <- representContainer(cont, depth)
 
-	for c := cont.Child; c != nil; c = c.Next {
-		walk(ch, c, depth+1)
+		for c := cont.Child; c != nil; c = c.Next {
+			walk(ch, c, depth+1)
+		}
 	}
 }
 
@@ -124,7 +126,7 @@ func representContainer(cont *Container, depth int) template.HTML {
 // nextId is the id of the next article in one of the following
 // containers. It needs to be supplied since we can't infer it
 // from cont, if there's no article after cont.Article.
-func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
+func ShowArticle(cont *Container, out io.Writer) {
 	type tmp struct {
 		*Container
 		SanitizedText template.HTML
@@ -143,6 +145,7 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
         }
     </style>
     <body>
+        {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
         <h1>{{.Article.Subject}} <i>{{.Article.OtherHeaders.From}}</i></h1>
 <pre>{{.SanitizedText}}</pre>
     </body>
@@ -172,16 +175,12 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 
 	var hasNext bool
 
-	if hasNext := next != nil || nextId != ""; hasNext {
+	if hasNext = next != nil; hasNext {
 		valuesNext.Set("delete", string(cont.Article.Id))
 		valuesNext.Set("view", "article")
-		id := ""
-		if next == nil {
-			id = string(nextId)
-		} else {
-			id = string(next.Article.Id)
+		if next != nil {
+			valuesNext.Set("arg", next.Article.Subject)
 		}
-		valuesNext.Set("arg", id)
 	}
 
 	urlBack := url.URL{
@@ -195,7 +194,7 @@ func ShowArticle(cont *Container, nextId MessageId, out io.Writer) {
 	text := RepresentArticle(*cont.Article)
 	data := tmp{cont, text,
 		template.HTML(urlNext.String()), template.HTML(urlBack.String()),
-		!hasNext}
+		hasNext}
 	err := tmpl.Execute(out, data)
 
 	if err != nil {
