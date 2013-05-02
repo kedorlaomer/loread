@@ -19,6 +19,7 @@ type block []indentedLine
 // similar to representContainer
 func RepresentArticle(article ParsedArticle) template.HTML {
 	text := article.Body
+
 	// TODO:
 	// * signatures
 	// * remove empty lines inserted by Google Groups
@@ -44,12 +45,14 @@ func RepresentArticle(article ParsedArticle) template.HTML {
 		if line.depth != lastDepth || len(TrimWhite(line.line)) == 0 {
 			blocks = append(blocks, lastBlock)
 			lastBlock = make(block, 0)
-			lastBlock = append(lastBlock, line)
 			lastDepth = line.depth
-		} else {
-			lastBlock = append(lastBlock, line)
 		}
+
+		lastBlock = append(lastBlock, line)
 	}
+
+	// don't forget last block
+	blocks = append(blocks, lastBlock)
 
 	// Determine if a block needs to be reflowed. We use the
 	// following strategy: If a line is longer than MAX_LENGTH,
