@@ -5,20 +5,18 @@ import (
 	"html/template"
 	"io"
 	"net/url"
-	"strings"
 )
 
 // Produces HTML for an initial screen listing all subscribed
 // groups.
-func InitialScreen(config map[string]string, out io.Writer) {
-	groups := strings.Split(config["groups"], ", ")
+func InitialScreen(groups []string, out io.Writer) {
 	template1 :=
 		`<html>
     <head>
         <title>Loread — The low reader</title>
     </head>
     <body>
-        <h1>Your subscribed groups<h1>
+        <h1>Your subscribed groups</h1>
         <ul>
             {{range .}}
                 <li><a href="?arg={{.}}&view=group">{{.}}</a></li>
@@ -41,6 +39,7 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
 	type tmp struct {
 		Name     string
 		Articles chan template.HTML
+		Back     string
 	}
 
 	template1 :=
@@ -55,6 +54,7 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
                 <li>{{.}}</li>
             {{end}}
         </ul>
+        <a href="{{.Back}}">Back</a>
     </body>
 </html>`
 
@@ -62,9 +62,15 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
 	ch := make(chan template.HTML, 5)
 	go containersToString(ch, containers)
 
+	backUrl := url.URL{
+		RawQuery: url.Values{
+			"view": {"overview"},
+		}.Encode()}
+
 	data := tmp{
 		Name:     group,
 		Articles: ch,
+		Back:     backUrl.String(),
 	}
 
 	err := tmpl.Execute(out, data)
@@ -94,7 +100,7 @@ func walk(ch chan<- template.HTML, cont *Container, depth int) {
 	}
 }
 
-// prints a container to HTML (which is passed through literally
+// Prints a container to HTML (which is passed through literally
 // by template.Execute)
 func representContainer(cont *Container, depth int) template.HTML {
 	prefix := ""
@@ -122,11 +128,12 @@ func representContainer(cont *Container, depth int) template.HTML {
 	return template.HTML(rv)
 }
 
-// shows cont.Article (where we assume cont.Article != nil)
-// nextId is the id of the next article in one of the following
-// containers. It needs to be supplied since we can't infer it
-// from cont, if there's no article after cont.Article.
-func ShowArticle(cont *Container, out io.Writer) {
+// Shows cont.Article (where we assume cont.Article != nil).
+// Since it's not possible to find out from the container which
+// group it belongs to (it could have several groups listed in
+// cont.Article.OtherHeaders["Newsgroups"]), we need provide
+// this information.
+func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 	type tmp struct {
 		*Container
 		SanitizedText template.HTML
@@ -161,25 +168,30 @@ func ShowArticle(cont *Container, out io.Writer) {
 
 	valuesBack := url.Values{}
 	valuesBack.Set("delete", string(cont.Article.Id))
+	valuesBack.Set("view", "group")
+	valuesBack.Set("arg", fromGroup)
 
 	valuesNext := url.Values{}
 
 	// find next article
 	var next *Container
-	for c := cont; c != nil; c = c.Parent {
-		if c.Next != nil && c.Next.Article != nil {
-			next = c.Next
-			break
+
+	if cont.Child != nil {
+		next = cont.Child
+	} else {
+		for c := cont; c != nil; c = c.Parent {
+			if c.Next != nil && c.Next.Article != nil {
+				next = c.Next
+				break
+			}
 		}
 	}
 
-	var hasNext bool
-
-	if hasNext = next != nil; hasNext {
+	if next != nil {
 		valuesNext.Set("delete", string(cont.Article.Id))
 		valuesNext.Set("view", "article")
 		if next != nil {
-			valuesNext.Set("arg", next.Article.Subject)
+			valuesNext.Set("arg", string(next.Article.Id))
 		}
 	}
 
@@ -194,10 +206,46 @@ func ShowArticle(cont *Container, out io.Writer) {
 	text := RepresentArticle(*cont.Article)
 	data := tmp{cont, text,
 		template.HTML(urlNext.String()), template.HTML(urlBack.String()),
-		hasNext}
+		next != nil}
 	err := tmpl.Execute(out, data)
 
 	if err != nil {
 		panic(err)
 	}
+}
+
+// Displays an error page showing data (as formatted via
+// fmt.Sprintf's %+v control)
+func ErrorPage(err interface{}, out io.Writer) {
+	type tmp struct {
+		Error string
+	}
+	template1 :=
+		`<html>
+    <head>
+        <title>Error</title>
+    </head>
+    <body>
+        <h1>Error</h1>
+        An error occurred: {{.Error}}
+    </body>
+</html>`
+
+	data := tmp{
+		Error: fmt.Sprintf("%+v", err),
+	}
+
+	tmpl := template.Must(template.New("error").Parse(template1))
+	err2 := tmpl.Execute(out, data)
+
+	if err2 != nil {
+		panic(err)
+	}
+}
+
+// Similar to ErrorPage, but uses a fmt.Sprintf format. Due to
+// this, out can't be supplied last as in ErrorPage.
+func ErrorPageF(out io.Writer, format string, other ...interface{}) {
+	text := fmt.Sprintf(format, other...)
+	ErrorPage(text, out)
 }

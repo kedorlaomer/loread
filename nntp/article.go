@@ -20,9 +20,9 @@ type RawArticle string
 type MessageId string
 
 // Parsed article. Its „Body“ still needs formatting, e. g. line
-// breaking, recognition of quotations, links, etc. References
-// contains message ids. Subject may start with „Re: “ and similar.
-// OtherHeaders doesn't contain References etc. Id is a message id.
+// breaking, recognition of quotations, links, etc.  Subject may
+// start with „Re: “ and similar.  OtherHeaders doesn't contain
+// References etc.
 type ParsedArticle struct {
 	References   []MessageId       // collected from References and In-Reply-To headers
 	Subject      string            // Subject line
@@ -32,30 +32,33 @@ type ParsedArticle struct {
 	Date         time.Time         // Date header (already parsed)
 }
 
-// Returns all saved articles from „group“.
-func GetArticles(group string) ([]RawArticle, error) {
+// Returns all saved articles from „group“ and the paths of
+// their files.
+func GetArticles(group string) ([]RawArticle, []string, error) {
 	info, err := ioutil.ReadDir(group)
 
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	rv := make([]RawArticle, 0)
+	paths := make([]string, 0)
 	for _, fileInfo := range info {
 		name := fileInfo.Name()
-		if name[0] != '.' {
+		if name[0] != '.' { // ignore .watermark
 			name = group + "/" + fileInfo.Name()
 			data, err := ioutil.ReadFile(name)
 
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			rv = append(rv, RawArticle(data))
+			paths = append(paths, name)
 		}
 	}
 
-	return rv, err
+	return rv, paths, err
 }
 
 // Separates body and headers; determines subject, references
@@ -207,8 +210,9 @@ func FormatArticle(article RawArticle) ParsedArticle {
 	var aTime time.Time
 	if date, ok := headers["Date"]; ok {
 		// we found all these date formats in our corpus,
-		// containing 20000+ messages from comp.lang.forth and
-		// comp.lang.lisp
+		// containing 40000+ messages from comp.lang.forth
+		// comp.lang.lisp, comp.lang.haskell and
+		// rec.games.abstract
 		layouts := []string{
 			"Mon, 2 Jan 2006 15:04:05 -0700 (MST)",
 			"Mon, 2 Jan 2006 15:04:05 -0700",
