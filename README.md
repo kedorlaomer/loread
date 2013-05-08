@@ -13,13 +13,13 @@ Configuration
 
 The configuration resides in a file config.txt that might look like
 
-server: reader80.eternal-september.org
-port: 80
-login: some-user-name
-pass: top-secret
-groups: comp.lang.lisp, rec.alt.coolstuff
-fetch-maximum: 10000
-verbose: yes
+    server: reader80.eternal-september.org
+    port: 80
+    login: some-user-name
+    pass: top-secret
+    groups: comp.lang.lisp, rec.alt.coolstuff
+    fetch-maximum: 10000
+    verbose: yes
 
 Comments or anything other than this formatting (including omitting or adding
 spaces) is not allowed, although adding other keys is not a problem.
