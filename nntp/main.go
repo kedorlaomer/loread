@@ -1,10 +1,11 @@
 package nntp
 
 import (
-	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 )
 
 type state struct {
@@ -14,6 +15,8 @@ type state struct {
 	messages       []*Container         // messages in current group
 	group          string               // group currently being visited
 }
+
+var exit = make(chan bool, 0)
 
 func Main() {
 	conf, err := ReadConfig("config.txt")
@@ -32,14 +35,27 @@ func Main() {
 		deleteMessages: make([]MessageId, 0),
 	}
 
-	fmt.Println("listening")
 	http.Handle("/", &s)
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	go func() {
+		err = http.ListenAndServe(":8080", nil)
+		log.Fatal(err)
+	}()
+
+	<-exit
+	time.Sleep(time.Second * time.Duration(3))
 }
 
 func (s *state) ServeHTTP(out http.ResponseWriter, request *http.Request) {
 	v := request.URL.Query()
 
+	// if there's a delete request, add to delete list
+	del, ok := v["delete"]
+
+	if ok && len(del) > 0 {
+		s.deleteMessages = append(s.deleteMessages, MessageId(del[0]))
+	}
+
+	// Serve. The action depends on view.
 	switch operation, ok := v["view"]; {
 	case !ok || len(operation) == 0:
 		fallthrough
@@ -85,6 +101,18 @@ func (s *state) ServeHTTP(out http.ResponseWriter, request *http.Request) {
 		} else {
 			ShowArticle(container, s.group, out)
 		}
+
+	case operation[0] == "quit":
+		// delete s.deleteMessages, ignore errors
+		for _, id := range s.deleteMessages {
+			path := s.paths[id]
+			os.Remove(path)
+		}
+
+		// good bye!
+		FinalScreen(out)
+
+		exit <- true
 
 	default:
 		log.Fatalf("unknown view: %s", operation[0])
