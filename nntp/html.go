@@ -7,6 +7,20 @@ import (
 	"net/url"
 )
 
+// Shows a good bye screen.
+func FinalScreen(out io.Writer) {
+	text :=
+		`<html>
+    <head>
+        <title>Loread — The low reader</title>
+    </head>
+    <body>
+        <h1>Good bye…</h1>
+    </body>
+</html>`
+	out.Write([]byte(text))
+}
+
 // Produces HTML for an initial screen listing all subscribed
 // groups.
 func InitialScreen(groups []string, out io.Writer) {
@@ -24,6 +38,7 @@ func InitialScreen(groups []string, out io.Writer) {
                 Nothing?
             {{end}}
         </ul>
+        <a href="?view=quit">Quit</a>
     </body>
 </html>`
 	tmpl := template.Must(template.New("initial").Parse(template1))
@@ -48,6 +63,7 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
         <title>Loread — {{.Name}}</title>
     </head>
     <body>
+        <a href="{{.Back}}">Back</a>
         <h1>Overview {{.Name}}</h1>
         <ul>
             {{range .Articles}}
@@ -152,16 +168,25 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
         }
     </style>
     <body>
-        {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+        <table width="100%">
+            <tr>
+                <td width="20%">
+                    <a href="{{.Back}}">Back</a>
+                </td>
+                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+            </tr>
+        </table>
         <h1>{{.Article.Subject}} <i>{{.Article.OtherHeaders.From}}</i></h1>
 <pre>{{.SanitizedText}}</pre>
+        <table width="100%">
+            <tr>
+                <td width="20%">
+                    <a href="{{.Back}}">Back</a>
+                </td>
+                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+            </tr>
+        </table>
     </body>
-    <table width="100%">
-        <tr>
-        <td width="20%"><a href="{{.Back}}">Back</a></td>
-        {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
-        </tr>
-    </table>
 </html>`
 
 	tmpl := template.Must(template.New("article").Parse(template1))
@@ -228,6 +253,7 @@ func ErrorPage(err interface{}, out io.Writer) {
     <body>
         <h1>Error</h1>
         An error occurred: {{.Error}}
+        <a href="?view=overview">Main Screen</a>
     </body>
 </html>`
 
