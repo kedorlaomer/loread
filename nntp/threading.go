@@ -12,6 +12,7 @@ import (
 type Container struct {
 	Article             *ParsedArticle // underlying Article
 	Parent, Child, Next *Container     // link structure (threaded tree)
+	Id                  MessageId      // its Article's ID (makes sense if we don't have this article)
 }
 
 type idTable map[MessageId]*Container
@@ -34,6 +35,7 @@ func Thread(articles []ParsedArticle) []*Container {
 		// A. Insert to id_table
 		container := &Container{
 			Article: &articles[i],
+			Id:      articles[i].Id,
 		}
 
 		id_table[message.Id] = container
@@ -61,13 +63,15 @@ func Thread(articles []ParsedArticle) []*Container {
 	}
 
 	for _, container := range id_table {
-		// C. Set message's parent.
-		refs := container.Article.References
-		if len(refs) > 0 {
-			// parent, according to References
-			realParent := containerById(refs[0])
-			if container.Parent == nil {
-				container.Parent = realParent
+		if container.Article != nil {
+			// C. Set message's parent.
+			refs := container.Article.References
+			if len(refs) > 0 {
+				// parent, according to References
+				realParent := containerById(refs[0])
+				if container.Parent == nil {
+					container.Parent = realParent
+				}
 			}
 		}
 	}
@@ -80,22 +84,15 @@ func Thread(articles []ParsedArticle) []*Container {
 		}
 	}
 
-	// Children of the same parent should get linked via the
-	// next pointer.
+	// Parent↔Child links already exist. Link all children via
+	// Next.
 	for _, container := range id_table {
-		if Parent := container.Parent; Parent != nil {
-			Child := Parent.Child
-			// If container is in the list of child→next→next→…,
-			// we mustn't insert it again.
-			mayInsert := Child != container
-			for Child.Next != nil && mayInsert {
-				mayInsert = mayInsert && Child != container
-				Child = Child.Next
+		if Parent := container.Parent; Parent != nil && Parent.Child != container {
+			last := Parent.Child
+			for last.Next != nil {
+				last = last.Next
 			}
-
-			if mayInsert {
-				Child.Next = container
-			}
+			last.Next = container
 		}
 	}
 
@@ -109,12 +106,54 @@ func Thread(articles []ParsedArticle) []*Container {
 		}
 	}
 
-	// 3.
+	// 3. free id_table; delete all Parent pointers
+	for _, container := range id_table {
+		container.Parent = nil
+	}
+
 	id_table = nil
 
-	// 4. This has to use recursion.
-	for _, container := range rootSet {
-		pruneEmptyContainer(container, true)
+	// 4. pruning
+
+	q := NewQueue()
+	for {
+		repeat := false
+		for i, container := range rootSet {
+			rootSet[i] = pruneEmpty(container)
+			q.Enqueue(rootSet[i])
+		}
+
+		// this makes Parent pointers invalid (we don't care)
+		for !q.Empty() {
+			container := q.Dequeue().(*Container)
+			if container.Next != nil {
+				old := container.Next
+				container.Next = pruneEmpty(container.Next)
+				q.Enqueue(container.Next)
+				if old != container.Next {
+					repeat = true
+				}
+			}
+
+			if container.Child != nil {
+				old := container.Child
+				container.Child = pruneEmpty(container.Child)
+				q.Enqueue(container.Child)
+				if old != container.Child {
+					repeat = true
+				}
+			}
+		}
+
+		if !repeat {
+			break
+		}
+	}
+
+	q = nil
+
+	for i, container := range rootSet {
+		rootSet[i] = pruneEmpty(container)
 	}
 
 	// 5. Group root set by subject
@@ -236,8 +275,10 @@ func Thread(articles []ParsedArticle) []*Container {
 
 		last.Next = that
 
+		// don't add to id_table, since it doesn't exist anymore
 		rootSet[i] = &Container{
 			Child: this,
+			Id:    "<artificial>",
 		}
 	}
 
@@ -266,7 +307,8 @@ func Thread(articles []ParsedArticle) []*Container {
 func containerById(id MessageId) *Container {
 	rv := id_table[id]
 	if rv == nil {
-		return &Container{}
+		rv = &Container{Id: id}
+		id_table[id] = rv
 	}
 
 	return rv
@@ -300,12 +342,20 @@ func mayLink(c1, c2 *Container) bool {
 	return !c1.reachable(c2) && !c2.reachable(c1)
 }
 
-// for debugging: displays the link structure of c
-func printContainers(c *Container) {
-	printContainersRek(c, 0)
+// for debugging: displays the link structure of container
+func printContainers(container *Container) {
+	c := container
+	for c != nil {
+		printContainersRek(c, 0)
+		c = c.Next
+	}
 }
 
 func printContainersRek(c *Container, depth int) {
+	if c == nil {
+		return
+	}
+
 	if depth > 0 {
 		for i := 0; i < depth; i++ {
 			fmt.Print("•")
@@ -313,9 +363,9 @@ func printContainersRek(c *Container, depth int) {
 	}
 
 	if c.Article != nil {
-		fmt.Println(c.Article.Subject)
+		fmt.Printf("%s (%s)\n", c.Article.Subject, c.Id)
 	} else {
-		fmt.Println("<<empty container>>")
+		fmt.Printf("<<empty container>> (%s)\n", c.Id)
 	}
 
 	for c2 := c.Child; c2 != nil; c2 = c2.Next {
@@ -323,40 +373,102 @@ func printContainersRek(c *Container, depth int) {
 	}
 }
 
-// Recursively perform step 4, following „Next“ and „Child“
-// links. The flag isRoot is true, if c is in the rootset (in
-// this case, only single children should be promoted to the
-// root).
-func pruneEmptyContainer(c *Container, isRoot bool) {
-	if c == nil {
-		return
-	}
+// There are four different cases. These diagrams describe, how
+// empty containers shall be pruned. ε, ε', ε'' are empty
+// containers (meaning: ε.Article == nil) and c, c' are
+// non-empty containers (meaning: c.Article != nil). An arrow a
+// → b is a Next pointer, an arrow
 
-	// 4A. empty article, no children
-	if shouldNuke(c.Child) {
-		c.Child = nil
-	}
+//             a
+//             ↓
+//             b
 
-	if shouldNuke(c.Next) {
-		c.Next = nil
-	}
+// is a Child pointer. The double arrow (tree) ⇒ (tree')
+// describes a rewriting rule.
 
-	// last sibling of c
-	last := c
-	for last.Next != nil {
-		last = last.Next
-	}
+//             (a)
+//  ε → ε'          ε'' → ε'
+//  ↓           ⇒
+//  ε''
 
-	// 4B. empty article, has children → promote
-	if c.Child != nil && c.Child.Article == nil {
-		if !isRoot || c.Child.Next == nil {
-			last.Next = c.Child
+//             (b)
+//  ε → c           c
+//  ↓           ⇒   ↓
+//  ε'              ε'
+
+//             (c)
+//  ε → ε'          ε'
+//  ↓           ⇒   ↓
+//  c               c
+
+//             (d)
+//  ε → c           c' → c
+//  ↓           ⇒
+//  c'
+
+func pruneEmpty(container *Container) *Container {
+	if container.Article == nil {
+		next := container.Next
+		child := container.Child
+
+		if next != nil && child != nil { // (a)
+			if next.Article == nil && child.Article == nil {
+				last := child
+				for last.Next != nil {
+					last = last.Next
+				}
+
+				last.Next = pruneEmpty(next)
+				return child
+			} else if next.Article != nil && child.Article == nil { // (b)
+				last := next.Child
+				if last == nil {
+					next.Child = pruneEmpty(child)
+					return next
+				}
+
+				for last.Next != nil {
+					last = last.Next
+				}
+
+				last.Next = pruneEmpty(child)
+				return child
+			} else if next.Article == nil && child.Article != nil { // (c)
+				if next.Child == nil {
+					next.Child = child
+				} else {
+					last := next.Child
+					for last.Next != nil {
+						last = last.Next
+					}
+					last.Next = child
+				}
+
+				return next
+			} else if next.Article != nil && child.Article != nil { // (d)
+				if child.Next == nil {
+					child.Next = pruneEmpty(next)
+				} else {
+					last := child.Next
+					for last.Next != nil {
+						last = last.Next
+					}
+
+					last.Next = pruneEmpty(next)
+				}
+				return child
+			} else {
+				fmt.Println("Thread: this can't happen")
+			}
+		} else if next == nil && child != nil {
+			return child
+		} else if child == nil && next != nil {
+			return next
 		}
 	}
 
-	// recurse
-	pruneEmptyContainer(c.Child, false)
-	pruneEmptyContainer(c.Next, false)
+	// no change
+	return container
 }
 
 func shouldNuke(c *Container) bool {

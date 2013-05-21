@@ -99,7 +99,11 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
 // prints cont and its children to ch
 func containersToString(ch chan<- template.HTML, cont []*Container) {
 	for _, c := range cont {
-		walk(ch, c, 0)
+		c2 := c
+		for c2 != nil {
+			walk(ch, c2, 0)
+			c2 = c2.Next
+		}
 	}
 
 	close(ch)
