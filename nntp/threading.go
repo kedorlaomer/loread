@@ -106,12 +106,20 @@ func Thread(articles []ParsedArticle) []*Container {
 		}
 	}
 
-	// 3. free id_table; delete all Parent pointers
+	// we need to redo the Parent pointers, since pruning destroyed them
 	for _, container := range id_table {
-		container.Parent = nil
-	}
+		if c1 := container.Child; c1 != nil {
+			c1.Parent = container
 
-	id_table = nil
+			if c2 := c1.Next; c2 != nil {
+				c2.Parent = container
+				for c2.Next != nil {
+					c2.Parent = container
+					c2 = c2.Next
+				}
+			}
+		}
+	}
 
 	// 4. pruning
 
@@ -123,7 +131,6 @@ func Thread(articles []ParsedArticle) []*Container {
 			q.Enqueue(rootSet[i])
 		}
 
-		// this makes Parent pointers invalid (we don't care)
 		for !q.Empty() {
 			container := q.Dequeue().(*Container)
 			if container.Next != nil {
@@ -155,6 +162,10 @@ func Thread(articles []ParsedArticle) []*Container {
 	for i, container := range rootSet {
 		rootSet[i] = pruneEmpty(container)
 	}
+
+	// 3.
+
+	id_table = nil
 
 	// 5. Group root set by subject
 
@@ -521,6 +532,14 @@ func findSubject(c *Container) string {
 type containers []*Container
 
 func (c containers) Less(i, j int) bool {
+	if c[i] == nil || c[i].Article == nil {
+		return true
+	}
+
+	if c[j] == nil || c[j].Article == nil {
+		return false
+	}
+
 	return c[i].Article.Date.Before(c[j].Article.Date)
 }
 
