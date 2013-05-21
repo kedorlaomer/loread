@@ -174,20 +174,20 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
     <body>
         <table width="100%">
             <tr>
+                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
-                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
             </tr>
         </table>
         <h1>{{.Article.Subject}} <i>{{.Article.OtherHeaders.From}}</i></h1>
 <pre>{{.SanitizedText}}</pre>
         <table width="100%">
             <tr>
+                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
-                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
             </tr>
         </table>
     </body>
