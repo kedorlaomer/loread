@@ -174,7 +174,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
     <body>
         <table width="100%">
             <tr>
-                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+                {{if .HasNext}}<td align="left" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
@@ -184,7 +184,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 <pre>{{.SanitizedText}}</pre>
         <table width="100%">
             <tr>
-                {{if .HasNext}}<td align="right" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+                {{if .HasNext}}<td align="left" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
@@ -209,14 +209,14 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 		next = cont.Child
 	} else {
 		for c := cont; c != nil; c = c.Parent {
-			if c.Next != nil && c.Next.Article != nil {
-				next = c.Next
+			if n := c.Next; n != nil && n.Article != nil {
+				next = n
 				break
 			}
 		}
 	}
 
-	if next != nil {
+	if next != nil && next.Article != nil {
 		valuesNext.Set("delete", string(cont.Article.Id))
 		valuesNext.Set("view", "article")
 		if next != nil {
