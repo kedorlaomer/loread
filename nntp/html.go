@@ -98,30 +98,16 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
 
 // prints cont and its children to ch
 func containersToString(ch chan<- template.HTML, cont []*Container) {
-	for _, c := range cont {
-		c2 := c
-		for c2 != nil {
-			walk(ch, c2, 0)
-			c2 = c2.Next
-		}
+	ch2 := make(chan *DepthContainer)
+	go WalkContainers(cont, ch2)
+	for cont := range ch2 {
+		ch <- representContainer(cont.Cont, cont.D)
 	}
-
 	close(ch)
 }
 
-// recursive kernel for containersToString
-func walk(ch chan<- template.HTML, cont *Container, depth int) {
-	if cont.Article != nil {
-		ch <- representContainer(cont, depth)
-
-		for c := cont.Child; c != nil; c = c.Next {
-			walk(ch, c, depth+1)
-		}
-	}
-}
-
-// Prints a container to HTML (which is passed through literally
-// by template.Execute)
+// Prints a container to HTML (which is passed through literally by
+// template.Execute since its type is template.HTML and not string).
 func representContainer(cont *Container, depth int) template.HTML {
 	prefix := ""
 
@@ -204,19 +190,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 
 	// find next article
 	var next *Container
-
-	if cont.Child != nil {
-		next = cont.Child
-	} else {
-		for c := cont; c != nil; c = c.Parent {
-			if n := c.Next; n != nil && n.Article != nil {
-				next = n
-				break
-			}
-		}
-	}
-
-	if next != nil && next.Article != nil {
+	if next = cont.Secondary; next != nil && next.Article != nil {
 		valuesNext.Set("delete", string(cont.Article.Id))
 		valuesNext.Set("view", "article")
 		if next != nil {

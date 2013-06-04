@@ -13,6 +13,15 @@ type Container struct {
 	Article             *ParsedArticle // underlying Article
 	Parent, Child, Next *Container     // link structure (threaded tree)
 	Id                  MessageId      // its Article's ID (makes sense if we don't have this article)
+	Secondary           *Container     // next container in breadth-first traversal
+}
+
+// Result of depth-first walking a Container tree and noting the
+// depths.
+
+type DepthContainer struct {
+	Cont *Container // visited Cont
+	D    int        // at depth depth
 }
 
 type idTable map[MessageId]*Container
@@ -106,21 +115,6 @@ func Thread(articles []ParsedArticle) []*Container {
 		}
 	}
 
-	// we need to redo the Parent pointers, since pruning destroyed them
-	for _, container := range id_table {
-		if c1 := container.Child; c1 != nil {
-			c1.Parent = container
-
-			if c2 := c1.Next; c2 != nil {
-				c2.Parent = container
-				for c2.Next != nil {
-					c2.Parent = container
-					c2 = c2.Next
-				}
-			}
-		}
-	}
-
 	// 4. pruning
 
 	q := NewQueue()
@@ -161,6 +155,21 @@ func Thread(articles []ParsedArticle) []*Container {
 
 	for i, container := range rootSet {
 		rootSet[i] = pruneEmpty(container)
+	}
+
+	// we need to redo the Parent pointers, since pruning destroyed them
+	for _, container := range id_table {
+		if c1 := container.Child; c1 != nil {
+			c1.Parent = container
+
+			if c2 := c1.Next; c2 != nil {
+				c2.Parent = container
+				for c2.Next != nil {
+					c2.Parent = container
+					c2 = c2.Next
+				}
+			}
+		}
 	}
 
 	// 3.
@@ -301,13 +310,19 @@ func Thread(articles []ParsedArticle) []*Container {
 		sortSiblings(c)
 	}
 
-	// link rootSet
-	for i := 0; i < len(rootSet)-1; i++ {
-		if mayLink(rootSet[i], rootSet[i+1]) {
-			rootSet[i].Next = rootSet[i+1]
-		} else {
-			fmt.Printf("Couldn't link #%d\n", i)
+	// still not done: link via Secondary
+	ch := make(chan *DepthContainer)
+	go WalkContainers(rootSet, ch)
+	old := (<-ch).Cont
+
+	for {
+		container, ok := <-ch
+		if !ok {
+			break
 		}
+
+		old.Secondary = container.Cont
+		old = old.Secondary
 	}
 
 	return rootSet
@@ -384,6 +399,33 @@ func printContainersRek(c *Container, depth int) {
 	}
 }
 
+// writes containers in breadth-first order to ch; closes ch
+func WalkContainers(containers []*Container, ch chan<- *DepthContainer) {
+	for _, container := range containers {
+		walkContainersRek(container, ch, 0)
+	}
+
+	close(ch)
+}
+
+// recursive kernel for walkContainers
+func walkContainersRek(container *Container, ch chan<- *DepthContainer, depth int) {
+	if container == nil {
+		return
+	}
+
+	if container.Article != nil {
+		ch <- &DepthContainer{
+			Cont: container,
+			D:    depth,
+		}
+	}
+
+	for c := container.Child; c != nil; c = c.Next {
+		walkContainersRek(c, ch, depth+1)
+	}
+}
+
 // There are four different cases. These diagrams describe, how
 // empty containers shall be pruned. ε, ε', ε'' are empty
 // containers (meaning: ε.Article == nil) and c, c' are
@@ -416,6 +458,13 @@ func printContainersRek(c *Container, depth int) {
 //  ε → c           c' → c
 //  ↓           ⇒
 //  c'
+
+// TODO: (d) is wrong, should be:
+
+//             (d')
+// ε → c            c
+// ↓            ⇒   ↓
+// c'               c'
 
 func pruneEmpty(container *Container) *Container {
 	if container.Article == nil {
