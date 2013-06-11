@@ -115,66 +115,11 @@ func Thread(articles []ParsedArticle) []*Container {
 		}
 	}
 
-	// 4. pruning
-
-	q := NewQueue()
-	for {
-		repeat := false
-		for i, container := range rootSet {
-			rootSet[i] = pruneEmpty(container)
-			q.Enqueue(rootSet[i])
-		}
-
-		for !q.Empty() {
-			container := q.Dequeue().(*Container)
-			if container.Next != nil {
-				old := container.Next
-				container.Next = pruneEmpty(container.Next)
-				q.Enqueue(container.Next)
-				if old != container.Next {
-					repeat = true
-				}
-			}
-
-			if container.Child != nil {
-				old := container.Child
-				container.Child = pruneEmpty(container.Child)
-				q.Enqueue(container.Child)
-				if old != container.Child {
-					repeat = true
-				}
-			}
-		}
-
-		if !repeat {
-			break
-		}
-	}
-
-	q = nil
-
-	for i, container := range rootSet {
-		rootSet[i] = pruneEmpty(container)
-	}
-
-	// we need to redo the Parent pointers, since pruning destroyed them
-	for _, container := range id_table {
-		if c1 := container.Child; c1 != nil {
-			c1.Parent = container
-
-			if c2 := c1.Next; c2 != nil {
-				c2.Parent = container
-				for c2.Next != nil {
-					c2.Parent = container
-					c2 = c2.Next
-				}
-			}
-		}
-	}
-
 	// 3.
 
 	id_table = nil
+
+	// 4. pruning is done implicitly
 
 	// 5. Group root set by subject
 
@@ -426,115 +371,6 @@ func walkContainersRek(container *Container, ch chan<- *DepthContainer, depth in
 	}
 }
 
-// There are four different cases. These diagrams describe, how
-// empty containers shall be pruned. ε, ε', ε'' are empty
-// containers (meaning: ε.Article == nil) and c, c' are
-// non-empty containers (meaning: c.Article != nil). An arrow a
-// → b is a Next pointer, an arrow
-
-//             a
-//             ↓
-//             b
-
-// is a Child pointer. The double arrow (tree) ⇒ (tree')
-// describes a rewriting rule.
-
-//             (a)
-//  ε → ε'          ε'' → ε'
-//  ↓           ⇒
-//  ε''
-
-//             (b)
-//  ε → c           c
-//  ↓           ⇒   ↓
-//  ε'              ε'
-
-//             (c)
-//  ε → ε'          ε'
-//  ↓           ⇒   ↓
-//  c               c
-
-//             (d)
-//  ε → c           c' → c
-//  ↓           ⇒
-//  c'
-
-// TODO: (d) is wrong, should be:
-
-//             (d')
-// ε → c            c
-// ↓            ⇒   ↓
-// c'               c'
-
-func pruneEmpty(container *Container) *Container {
-	if container.Article == nil {
-		next := container.Next
-		child := container.Child
-
-		if next != nil && child != nil { // (a)
-			if next.Article == nil && child.Article == nil {
-				last := child
-				for last.Next != nil {
-					last = last.Next
-				}
-
-				last.Next = pruneEmpty(next)
-				return child
-			} else if next.Article != nil && child.Article == nil { // (b)
-				last := next.Child
-				if last == nil {
-					next.Child = pruneEmpty(child)
-					return next
-				}
-
-				for last.Next != nil {
-					last = last.Next
-				}
-
-				last.Next = pruneEmpty(child)
-				return child
-			} else if next.Article == nil && child.Article != nil { // (c)
-				if next.Child == nil {
-					next.Child = child
-				} else {
-					last := next.Child
-					for last.Next != nil {
-						last = last.Next
-					}
-					last.Next = child
-				}
-
-				return next
-			} else if next.Article != nil && child.Article != nil { // (d)
-				if child.Next == nil {
-					child.Next = pruneEmpty(next)
-				} else {
-					last := child.Next
-					for last.Next != nil {
-						last = last.Next
-					}
-
-					last.Next = pruneEmpty(next)
-				}
-				return child
-			} else {
-				fmt.Println("Thread: this can't happen")
-			}
-		} else if next == nil && child != nil {
-			return child
-		} else if child == nil && next != nil {
-			return next
-		}
-	}
-
-	// no change
-	return container
-}
-
-func shouldNuke(c *Container) bool {
-	return c != nil && c.Child == nil && c.Next == nil && c.Article == nil
-}
-
 // removes leading _BAD_PREFIXES from subj
 func stripPrefixes(subj string) string {
 	redo := true
@@ -580,6 +416,7 @@ func findSubject(c *Container) string {
 // infrastructure for sorting []*Container by date
 type containers []*Container
 
+// nil is smaller than anything
 func (c containers) Less(i, j int) bool {
 	if c[i] == nil || c[i].Article == nil {
 		return true

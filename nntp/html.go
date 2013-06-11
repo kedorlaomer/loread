@@ -117,7 +117,7 @@ func representContainer(cont *Container, depth int) template.HTML {
 		}
 	}
 
-	subject := "<<empty container>>"
+	subject := "<<no subject>>"
 
 	v := url.Values{}
 	if article := cont.Article; article != nil {
@@ -130,7 +130,13 @@ func representContainer(cont *Container, depth int) template.HTML {
 		RawQuery: v.Encode(),
 	}
 
-	rv := fmt.Sprintf("<a href=\"%s\">%s %s</a>", url.String(), prefix, subject)
+	var rv string
+	if cont.Article != nil {
+		rv = fmt.Sprintf("<a href=\"%s\">%s %s</a>", url.String(), prefix, subject)
+	} else {
+		rv = prefix + subject
+	}
+
 	return template.HTML(rv)
 }
 
