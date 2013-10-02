@@ -50,7 +50,7 @@ func InitialScreen(groups []string, out io.Writer) {
 }
 
 // Produces HTML showing the (threaded) overview for a group.
-func GroupOverview(group string, containers []*Container, out io.Writer) {
+func GroupOverview(group string, containers map[*Container]bool, out io.Writer) {
 	type tmp struct {
 		Name     string
 		Articles chan template.HTML
@@ -97,7 +97,7 @@ func GroupOverview(group string, containers []*Container, out io.Writer) {
 }
 
 // prints cont and its children to ch
-func containersToString(ch chan<- template.HTML, cont []*Container) {
+func containersToString(ch chan<- template.HTML, cont map[*Container]bool) {
 	ch2 := make(chan *DepthContainer)
 	go WalkContainers(cont, ch2)
 	for cont := range ch2 {
@@ -113,11 +113,17 @@ func representContainer(cont *Container, depth int) template.HTML {
 
 	if depth > 0 {
 		for i := 0; i < depth; i++ {
-			prefix += "  "
+			prefix += " █"
 		}
 	}
 
-	subject := "<<no subject>>"
+	// FIXME: why do we need to quote „<“ as „&lt;“? what does
+	// template.HTML do for us?
+	subject := fmt.Sprintf("&lt;&lt;no subject %s; child: %#v, next: %#v>>", cont.Id, cont.Child, cont.Next)
+
+	if cont.Id == "" {
+		fmt.Printf("%#+v\n", cont)
+	}
 
 	v := url.Values{}
 	if article := cont.Article; article != nil {
@@ -143,8 +149,8 @@ func representContainer(cont *Container, depth int) template.HTML {
 // Shows cont.Article (where we assume cont.Article != nil).
 // Since it's not possible to find out from the container which
 // group it belongs to (it could have several groups listed in
-// cont.Article.OtherHeaders["Newsgroups"]), we need provide
-// this information.
+// cont.Article.OtherHeaders["Newsgroups"]), we need to provide this
+// information.
 func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 	type tmp struct {
 		*Container
@@ -166,7 +172,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
     <body>
         <table width="100%">
             <tr>
-                {{if .HasNext}}<td align="left" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+                <td align="left" width="80%">{{if .HasNext}}<a href="{{.Next}}">Next</a>{{else}}No Next{{end}}</td>
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
@@ -176,7 +182,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 <pre>{{.SanitizedText}}</pre>
         <table width="100%">
             <tr>
-                {{if .HasNext}}<td align="left" width="80%"><a href="{{.Next}}">Next</a></td>{{end}}
+                <td align="left" width="80%">{{if .HasNext}}<a href="{{.Next}}">Next</a>{{else}}No Next{{end}}</td>
                 <td width="20%">
                     <a href="{{.Back}}">Back</a>
                 </td>
@@ -223,7 +229,7 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 	}
 }
 
-// Displays an error page showing data (as formatted via
+// Displays an error page showing err (as formatted via
 // fmt.Sprintf's %+v control)
 func ErrorPage(err interface{}, out io.Writer) {
 	type tmp struct {

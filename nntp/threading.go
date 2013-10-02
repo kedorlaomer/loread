@@ -2,6 +2,7 @@ package nntp
 
 import (
 	"fmt"
+	//"math/rand"
 	"sort"
 	"strings"
 )
@@ -36,238 +37,245 @@ var _BAD_PREFIXES = []string{"re: ", "aw: "}
 // Threads articles according to the algorithm from
 // http://www.jwz.org/doc/threading.html; see also
 // https://raw.github.com/kedorlaomer/loread/master/threading.txt
-func Thread(articles []ParsedArticle) []*Container {
+func Thread(articles []ParsedArticle) map[*Container]bool {
 	id_table = make(idTable)
 
-	// 1. Rough threading
-	for i, message := range articles {
-		// A. Insert to id_table
-		container := &Container{
-			Article: &articles[i],
-			Id:      articles[i].Id,
-		}
-
-		id_table[message.Id] = container
-	}
-
-	// The original algorithm says here that steps 1A, 1B and 1C
-	// should be performed in the same loop (for each message),
-	// but using different loops seems to be easier.
+	// 1
 	for _, message := range articles {
-		// B. Link together what belongs together according to
-		// message.References
-		if len(message.References) > 1 {
-			for i := len(message.References) - 2; i >= 0; i-- {
-				id1 := message.References[i+1]
-				id2 := message.References[i]
-				c1 := containerById(id1)
-				c2 := containerById(id2)
+		// 1A
+		container := containerById(message.Id)
 
-				// insert a link c1 → c2
-				if c1.Parent == nil && mayLink(c1, c2) {
-					c1.Parent = c2
-				}
+		if container.Article == nil {
+			container.Article = new(ParsedArticle)
+			*container.Article = message
+		}
+
+		// 1B
+		for i := 0; i < len(message.References)-1; i++ {
+			container1 := containerById(message.References[i])
+			container2 := containerById(message.References[i+1])
+
+			if container1.Parent == nil && container2.Parent == nil &&
+				mayLink(container1, container2) {
+				container2.Parent = container1
+			}
+		}
+
+		// 1C
+		if l := len(message.References); l > 0 {
+			if last := containerById(message.References[l-1]); mayLink(container, last) {
+				container.Parent = last
+			}
+		} else {
+			container.Parent = nil
+		}
+	}
+
+	// we „forgot“ to set Child and Next links
+
+	// Child links
+	for _, container := range id_table {
+		if parent := container.Parent; parent != nil && parent.Child == nil {
+			parent.Child = container
+		}
+	}
+
+	// Next links
+	for _, container := range id_table {
+		if parent := container.Parent; parent != nil && parent.Child != container {
+			otherChild := parent.Child
+			for otherChild.Next != nil && otherChild != container {
+				otherChild = otherChild.Next
+			}
+
+			if otherChild != container {
+				otherChild.Next = container
 			}
 		}
 	}
 
-	for _, container := range id_table {
-		if container.Article != nil {
-			// C. Set message's parent.
-			refs := container.Article.References
-			if len(refs) > 0 {
-				// parent, according to References
-				realParent := containerById(refs[0])
-				if container.Parent == nil {
-					container.Parent = realParent
-				}
-			}
+	// 2
+	rootSet := make(map[*Container]bool)
+
+	for _, message := range articles {
+		container := containerById(message.Id)
+
+		for container.Parent != nil {
+			container = container.Parent
 		}
+
+		rootSet[container] = true
 	}
 
-	// Now, messages are linked according to parents. Insert
-	// child links.
-	for _, container := range id_table {
-		if Parent := container.Parent; Parent != nil && Parent.Child == nil {
-			Parent.Child = container
-		}
-	}
-
-	// Parent↔Child links already exist. Link all children via
-	// Next.
-	for _, container := range id_table {
-		if Parent := container.Parent; Parent != nil && Parent.Child != container {
-			last := Parent.Child
-			for last.Next != nil {
-				last = last.Next
-			}
-			last.Next = container
-		}
-	}
-
-	// 2.
-	rootSet := []*Container{}
-
-	// containers without parents are the root set
-	for _, container := range id_table {
-		if container.Parent == nil {
-			rootSet = append(rootSet, container)
-		}
-	}
-
-	// 3.
-
+	// 3
 	id_table = nil
 
-	// 4. pruning is done implicitly
+	// 4
+	//
+	// we use WalkContainers as replacement for recursion
 
-	// 5. Group root set by subject
+	repeat := false
 
-	// 5A.
-	subject_table := make(subjectTable)
+	// for whatever reason, doing this once isn't sufficient
+	for repeat {
+		repeat = false
+		ch := make(chan *DepthContainer)
+		go WalkContainers(rootSet, ch)
 
-	// 5B. Find root set's subjects
-	for _, c := range rootSet {
-		subject := stripPrefixes(findSubject(c))
+		for d := range ch {
+			container := d.Cont
+			// 4A
+			if container.Article == nil {
+				if container.Child == nil && container.Next == nil {
+					delete(rootSet, container)
+					repeat = true
+					// delete from parent's child list, if existing
+					deleteFromParentsList(container)
+				}
+			}
 
-		if subject == "" {
-			continue
-		}
+			// 4B
+			if container.Article == nil && container.Child != nil {
+				// remove this container
+				repeat = true
+				delete(rootSet, container)
 
-		old, ok := subject_table[subject]
-		// no old container → insert
-		if !ok {
-			subject_table[subject] = c
-		} else {
-			// new container is empty → more interesting
-			if c.Article == nil {
-				subject_table[subject] = c
-			} else {
-				if isFollowup(old.Article.Subject) && !isFollowup(c.Article.Subject) {
-					subject_table[subject] = c
+				// promote single child to root set
+				if container.Child.Next == nil {
+					rootSet[container.Child] = true
+				} else if container.Parent != nil {
+					// promote non-single child to non-root
+					parent := container.Parent
+					last := parent.Child
+					for last.Next != nil {
+						last = last.Next
+					}
+
+					last.Next = container.Child
 				}
 			}
 		}
 	}
 
-	// 5C. Merge containers with (almost) equal Subject.
-	for i, this := range rootSet {
-		subject := stripPrefixes(findSubject(this))
+	// 5
 
-		if subject == "" {
-			continue
-		}
+	// A
+	subject_table := make(subjectTable)
 
-		that := subject_table[subject]
-
-		if that == nil || that == this {
-			continue
-		}
-
-		// We want to merge the separate threads this and that.
-
-		// (i) both dummies: append that's children to this'
-		// children
-		if this.Article == nil && that.Article == nil {
-			last := this
-			for last.Next != nil {
-				last = last.Next
+	// B
+	for this := range rootSet {
+		subject := findSubject(this)
+		if subject != "" {
+			old, ok := subject_table[subject]
+			if !ok ||
+				(this.Article == nil || old.Article != nil) ||
+				isFollowup(old.Article.Subject) && !isFollowup(this.Article.Subject) {
+				subject_table[subject] = this
 			}
-
-			last.Next = that.Child
-			that.Child = nil
-			that.Next = nil
-			delete(subject_table, subject)
-			subject_table[subject] = this
-
-			continue
-		}
-
-		// (ii) one is empty, the that isn't → append non-empty
-		if (this.Article == nil) != (that.Article == nil) {
-			var empty, nonEmpty *Container
-			if this.Article == nil {
-				empty = this
-				nonEmpty = that
-			} else {
-				empty = that
-				nonEmpty = this
-			}
-
-			last := empty
-			for last.Next != nil {
-				last = last.Next
-			}
-
-			last.Next = nonEmpty
-
-			continue
-		}
-
-		// (iii) that is non-empty, that is not a follow up, but
-		// this is → make this child of that
-		if that.Article != nil && !isFollowup(that.Article.Subject) &&
-			isFollowup(this.Article.Subject) {
-			last := that
-			for last.Next != nil {
-				last = last.Next
-			}
-
-			last.Next = this
-
-			continue
-		}
-
-		// (iv) that is non-empty, that is follow up, but this
-		// is isn't → make that child of this
-		if that.Article != nil && isFollowup(that.Article.Subject) &&
-			!isFollowup(this.Article.Subject) {
-			last := this
-			for last.Next != nil {
-				last = last.Next
-			}
-
-			last.Next = that
-
-			continue
-		}
-
-		// (v) make this and that siblings of a new container
-		last := this
-		for last.Next != nil {
-			last = last.Next
-		}
-
-		last.Next = that
-
-		// don't add to id_table, since it doesn't exist anymore
-		rootSet[i] = &Container{
-			Child: this,
-			Id:    "<artificial>",
 		}
 	}
 
-	// 6. Done.
+	// C
+	////for this := range rootSet {
+	////	subject := findSubject(this)
+	////	that, ok := subject_table[subject]
+	////	if !ok || this == that {
+	////		continue
+	////	}
 
-	// 7. Not really: Need to sort siblings. This is is easier
-	// to do recursively.
-	for _, c := range rootSet {
-		sortSiblings(c)
-	}
+	////	// (a)
+	////	// both are dummies
+	////	if this.Article == nil && that.Article == nil {
+	////		// append this' children to that's children
+	////		last := that.Child
+	////		for last.Next != nil {
+	////			last = last.Next
+	////		}
 
-	// still not done: link via Secondary
+	////		last.Next = this.Child
+
+	////		// and delete this
+	////		delete(rootSet, this)
+	////		subject_table[subject] = that
+	////	} else if ((this.Article == nil) && (that.Article != nil)) ||
+	////		((this.Article != nil) && (that.Article == nil)) {
+	////		// (b)
+	////		// one is empty, another one is not
+	////		if this.Article == nil {
+	////			this, that = that, this
+	////		}
+
+	////		// that is empty, this isn't
+
+	////		subject_table[subject] = that
+	////		makeToChildOf(this, that)
+
+	////	} else if that.Article != nil && !isFollowup(that.Article.Subject) &&
+	////		this.Article != nil && isFollowup(this.Article.Subject) {
+	////		// (c)
+	////		// that is a follow-up, this isn't
+	////		makeToChildOf(this, that)
+	////		subject_table[subject] = that
+	////	} else if that.Article != nil && isFollowup(that.Article.Subject) &&
+	////		this.Article != nil && !isFollowup(this.Article.Subject) {
+	////		// (d)
+	////		// misordered
+	////		makeToChildOf(that, this)
+	////	} else {
+	////		// (e)
+	////		// otherwise
+	////		newId := fmt.Sprintf("id%s@random.id", rand.Int())
+
+	////		container := &Container{
+	////			Id: MessageId(newId),
+	////		}
+
+	////		// container
+	////		//    ↓
+	////		//  this→⋯→last→that
+
+	////		this.Parent = container
+	////		that.Parent = container
+
+	////		container.Child = this
+	////		last := this
+	////		for last.Next != nil {
+	////			last = last.Next
+	////		}
+
+	////		last.Next = that
+	////	}
+	////}
+
+	// 6 (nothing)
+
+	// 7
+
 	ch := make(chan *DepthContainer)
 	go WalkContainers(rootSet, ch)
-	old := (<-ch).Cont
 
-	for {
-		container, ok := <-ch
-		if !ok {
+	for container := range ch {
+		sortSiblings(container.Cont)
+	}
+
+	// the algorithm ends here; we need additional work
+
+	// add Secondary links according to depth-first traversal
+	ch = make(chan *DepthContainer)
+	go WalkContainers(rootSet, ch)
+
+	var first *DepthContainer
+	for first = range ch {
+		if first != nil && first.Cont != nil {
 			break
 		}
+	}
 
-		old.Secondary = container.Cont
-		old = old.Secondary
+	for second := range ch {
+		if second == nil || second.Cont == nil || second.Cont.Article != nil {
+			first.Cont.Secondary = second.Cont
+			first = second
+		}
 	}
 
 	return rootSet
@@ -285,32 +293,23 @@ func containerById(id MessageId) *Container {
 	return rv
 }
 
-// Is c2 reachable from c1? FIXME: Do we need a graph traversal?
-func (c1 *Container) reachable(c2 *Container) bool {
-	// Breadth-first traversal of graph structure generated by
-	// edges parent, child, next.
-	visited := make(map[*Container]bool)
-	q := NewQueue()
-	q.Enqueue(c1)
+// Is c2 reachable from c1 by using Parent links?
+func (c1 *Container) reachableUpwards(c2 *Container) bool {
+	c := c1.Parent
 
-	for !q.Empty() {
-		if c := q.Dequeue().(*Container); c != nil && !visited[c] {
-			visited[c] = true
-			q.Enqueue(c.Parent)
-			q.Enqueue(c.Child)
-			q.Enqueue(c.Next)
-			if c == c2 { // c2 is reachable
-				return true
-			}
+	for c != nil {
+		if c == c2 {
+			return true
 		}
-	}
 
+		c = c.Parent
+	}
 	return false
 }
 
 // Is adding a link between c1 and c2 allowed?
 func mayLink(c1, c2 *Container) bool {
-	return !c1.reachable(c2) && !c2.reachable(c1)
+	return c1 != c2 && !c1.reachableUpwards(c2) && !c2.reachableUpwards(c1)
 }
 
 // for debugging: displays the link structure of container
@@ -345,9 +344,13 @@ func printContainersRek(c *Container, depth int) {
 }
 
 // writes containers in breadth-first order to ch; closes ch
-func WalkContainers(containers []*Container, ch chan<- *DepthContainer) {
-	for _, container := range containers {
-		walkContainersRek(container, ch, 0)
+func WalkContainers(containers map[*Container]bool, ch chan<- *DepthContainer) {
+	for container := range containers {
+		c := container
+		for c != nil {
+			walkContainersRek(c, ch, 0)
+			c = c.Next
+		}
 	}
 
 	close(ch)
@@ -359,11 +362,9 @@ func walkContainersRek(container *Container, ch chan<- *DepthContainer, depth in
 		return
 	}
 
-	if container.Article != nil {
-		ch <- &DepthContainer{
-			Cont: container,
-			D:    depth,
-		}
+	ch <- &DepthContainer{
+		Cont: container,
+		D:    depth,
 	}
 
 	for c := container.Child; c != nil; c = c.Next {
@@ -461,5 +462,44 @@ func sortSiblings(c *Container) {
 			// terminate list
 			iter.Next = nil
 		}
+	}
+}
+
+func deleteFromParentsList(container *Container) {
+	if parent := container.Parent; parent != nil {
+		if container == parent.Child {
+			parent.Child = nil
+		} else {
+			find := parent.Child
+			for find.Next != container {
+				find = find.Next
+			}
+
+			find.Next = nil
+		}
+	}
+
+}
+
+// make this to a child of that
+func makeToChildOf(this, that *Container) {
+	// make this a child of that and a sibling of that's children
+
+	// this  that           that
+	//        ↓         ⇒    ↓
+	//        c→⋯→last       c→⋯→last→this
+
+	this.Parent = that
+	last := that.Child
+	for last.Next != nil {
+		last = last.Next
+	}
+
+	// relink this' siblings' Parent links to that
+	last.Next = this
+	for this != nil {
+		this.Parent = that
+		this = this.Next
+
 	}
 }

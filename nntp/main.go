@@ -12,7 +12,7 @@ type state struct {
 	groups         []string             // subscribed groups
 	paths          map[MessageId]string // maps message ids to their paths
 	deleteMessages []MessageId          // messages to be deleted
-	messages       []*Container         // messages in current group
+	messages       map[*Container]bool  // messages in current group
 	group          string               // group currently being visited
 }
 
@@ -119,9 +119,9 @@ func (s *state) ServeHTTP(out http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func findArticle(containers []*Container, id MessageId) *Container {
+func findArticle(containers map[*Container]bool, id MessageId) *Container {
 	q := NewQueue()
-	for _, c := range containers {
+	for c := range containers {
 		q.Enqueue(c)
 	}
 

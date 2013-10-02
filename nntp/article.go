@@ -134,6 +134,14 @@ func FormatArticle(article RawArticle) ParsedArticle {
 	}
 	delete(headers, "Subject")
 
+	// „From“ is not important, but nevertheless we have do deal
+	// with it, since it may be base64 or quoted-printable
+	// encoded
+
+	if from := headers["From"]; len(from) > 0 && from[0:2] == "=?" {
+		headers["From"] = decodeHeader(from)
+	}
+
 	// Id
 	msgId := headers["Message-Id"]
 	delete(headers, "Message-Id")
