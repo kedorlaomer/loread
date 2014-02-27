@@ -33,12 +33,12 @@ func InitialScreen(groups []string, out io.Writer) {
         <h1>Your subscribed groups</h1>
         <ul>
             {{range .}}
-                <li><a href="?arg={{.}}&view=group">{{.}}</a></li>
+                <li><big><big><big><a href="?arg={{.}}&view=group">{{.}}</a></big></big></big></li>
             {{else}}
                 Nothing?
             {{end}}
         </ul>
-        <a href="?view=quit">Quit</a>
+        <big><big><big><a href="?view=quit">Quit</a></big></big></big>
     </body>
 </html>`
 	tmpl := template.Must(template.New("initial").Parse(template1))
@@ -63,14 +63,14 @@ func GroupOverview(group string, containers map[*Container]bool, out io.Writer) 
         <title>Loread — {{.Name}}</title>
     </head>
     <body>
-        <a href="{{.Back}}">Back</a>
+        <big><big><big><a href="{{.Back}}">Back</a></big></big></big></big></big></big>
         <h1>Overview {{.Name}}</h1>
         <ul>
             {{range .Articles}}
                 <li>{{.}}</li>
             {{end}}
         </ul>
-        <a href="{{.Back}}">Back</a>
+        <big><big><big><a href="{{.Back}}">Back</a></big></big></big>
     </body>
 </html>`
 
@@ -172,9 +172,9 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
     <body>
         <table width="100%">
             <tr>
-                <td align="left" width="80%">{{if .HasNext}}<a href="{{.Next}}">Next</a>{{else}}No Next{{end}}</td>
+                <td align="left" width="80%">{{if .HasNext}}<big><big><big><a href="{{.Next}}">Next</a></big></big></big>{{else}}No Next{{end}}</td>
                 <td width="20%">
-                    <a href="{{.Back}}">Back</a>
+                    <big><big><big><a href="{{.Back}}">Back</a></big></big></big>
                 </td>
             </tr>
         </table>
@@ -182,9 +182,9 @@ func ShowArticle(cont *Container, fromGroup string, out io.Writer) {
 <pre>{{.SanitizedText}}</pre>
         <table width="100%">
             <tr>
-                <td align="left" width="80%">{{if .HasNext}}<a href="{{.Next}}">Next</a>{{else}}No Next{{end}}</td>
+                <td align="left" width="80%">{{if .HasNext}}<big><big><big><a href="{{.Next}}">Next</a></big></big></big>{{else}}No Next{{end}}</td>
                 <td width="20%">
-                    <a href="{{.Back}}">Back</a>
+                    <big><big><big><a href="{{.Back}}">Back</a></big></big></big>
                 </td>
             </tr>
         </table>
@@ -243,7 +243,7 @@ func ErrorPage(err interface{}, out io.Writer) {
     <body>
         <h1>Error</h1>
         An error occurred: {{.Error}}
-        <a href="?view=overview">Main Screen</a>
+        <big><big><big><a href="?view=overview">Main Screen</a></big></big></big>
     </body>
 </html>`
 
